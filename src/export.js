@@ -1,7 +1,7 @@
 // Export a step as PNG (one file per page) or PDF (one file, a page per
 // image): the pages flattened and cleaned, or the score (laid out on A4 pages, vector in the PDF). jsPDF and svg2pdf.js
 // are loaded on the first PDF export.
-import { download } from "./download.js";
+import { download, downloadAll } from "./download.js";
 import { renderMusicXml } from "./render/verovio.js";
 
 /** A canvas showing RGBA pixels ({ data, width, height }). */
@@ -51,15 +51,17 @@ async function svgCanvas(svg, ppm) {
 
 const toBlob = (canvas) =>
 	new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Save canvases as PNG files: `<name>.png`, or `<name>-1.png`, … */
 async function savePngs(canvases, name) {
+	const files = [];
 	for (const [k, canvas] of canvases.entries()) {
-		const file = canvases.length > 1 ? `${name}-${k + 1}.png` : `${name}.png`;
-		download(file, await toBlob(canvas));
-		await pause(300); // browsers drop downloads started at once
+		files.push({
+			name: canvases.length > 1 ? `${name}-${k + 1}.png` : `${name}.png`,
+			blob: await toBlob(canvas),
+		});
 	}
+	await downloadAll(files);
 }
 
 async function loadPdf() {
@@ -99,7 +101,7 @@ async function saveImagesPdf(canvases, name) {
 			"FAST",
 		);
 	}
-	pdf.save(`${name}.pdf`);
+	await download(`${name}.pdf`, pdf.output("blob"));
 }
 
 /** Save SVG pages as one vector PDF (A4 pages, the SVGs in millimetres). */
@@ -131,7 +133,7 @@ async function saveSvgPdf(svgs, name) {
 	} finally {
 		host.remove();
 	}
-	pdf.save(`${name}.pdf`);
+	await download(`${name}.pdf`, pdf.output("blob"));
 }
 
 /** The pages, flattened and cleaned. */

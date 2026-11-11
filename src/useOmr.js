@@ -22,7 +22,11 @@ import { fullQuad } from "./pipeline/capture/index.js";
 import {
 	detectPageCorners,
 	engines,
+	fetchModels,
 	flattenPage,
+	hasModels,
+	isApp,
+	removeModels,
 	runPipeline,
 	stopRecognition,
 } from "./pipeline/index.js";
@@ -61,8 +65,63 @@ export function useOmr() {
 	const currentIndex = ref(0);
 	const page = computed(() => pages.value[currentIndex.value] ?? null);
 
+	// In the app, each detector's models: "ready" (inside the app, or
+	// downloaded), "missing" or "downloading" (on the web, models are
+	// downloaded when first used: always "ready")
+	const models = ref({});
+	const modelProgress = ref(null);
+	const modelReady = computed(
+		() => !isApp || models.value[engineId.value] === "ready",
+	);
+
+	async function refreshModels() {
+		for (const { id } of engines) {
+			try {
+				models.value[id] = (await hasModels(id)) ? "ready" : "missing";
+			} catch (e) {
+				console.error(e);
+				models.value[id] = "missing";
+			}
+		}
+	}
+	if (isApp) {
+		refreshModels();
+	}
+
+	/** Download a detector's models (in the app), to keep them. */
+	async function downloadModel(id) {
+		models.value[id] = "downloading";
+		modelProgress.value = { stage: "starting", ratio: 0 };
+		error.value = null;
+		try {
+			await fetchModels(id, {
+				onProgress: (q) => {
+					modelProgress.value = q;
+				},
+			});
+			models.value[id] = "ready";
+		} catch (e) {
+			console.error(e);
+			error.value = `Download failed: ${e.message}`;
+			models.value[id] = "missing";
+		} finally {
+			modelProgress.value = null;
+		}
+	}
+
+	/** Remove a detector's downloaded models (in the app), to free the space. */
+	async function removeModel(id) {
+		try {
+			await removeModels(id);
+		} catch (e) {
+			console.error(e);
+		}
+		await refreshModels();
+	}
+
 	const canRun = computed(
 		() =>
+			modelReady.value &&
 			pages.value.length > 0 &&
 			pages.value.every((p) => p.captureState !== "detecting"),
 	);
@@ -350,6 +409,12 @@ export function useOmr() {
 	return reactive({
 		engines,
 		engineId,
+		isApp,
+		models,
+		modelProgress,
+		modelReady,
+		downloadModel,
+		removeModel,
 		running,
 		progress,
 		error,

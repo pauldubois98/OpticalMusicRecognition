@@ -9,6 +9,7 @@ import ortMjsUrl from "onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url";
 // Vite-resolved URLs for ORT's WASM runtime (the .mjs glue must not live in
 // /public: Vite forbids importing from there)
 import ortWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url";
+import { BUNDLED_MODELS } from "./bundled.js";
 import { DOCALIGNER_FILE, detectCorners } from "./capture/docaligner.js";
 import { rgbaToGray } from "./copisteria/image.js";
 import { recognizePage } from "./copisteria/index.js";
@@ -24,6 +25,26 @@ const MODELS_URL = (() => {
 		`${import.meta.env?.BASE_URL ?? "/"}models/`;
 	return url.endsWith("/") ? url : `${url}/`;
 })();
+// The Android / iOS app: only some models are inside it (see bundled.js), the
+// others come from VITE_EXTRA_MODELS_URL (a Hugging Face URL pinned to a
+// commit, so that they match the app's copista-meta.json).
+const IS_APP = Boolean(import.meta.env?.VITE_APP);
+const EXTRA_MODELS_URL = (() => {
+	const url = import.meta.env?.VITE_EXTRA_MODELS_URL ?? "";
+	return url && !url.endsWith("/") ? `${url}/` : url;
+})();
+const isBundled = (file) => !IS_APP || BUNDLED_MODELS.includes(file);
+
+/** Where a model file is downloaded from. */
+function urlOf(file) {
+	if (isBundled(file)) {
+		return MODELS_URL + file;
+	}
+	if (!EXTRA_MODELS_URL) {
+		throw new Error(`${file} is not in the app and no VITE_EXTRA_MODELS_URL`);
+	}
+	return EXTRA_MODELS_URL + file;
+}
 const CACHE_PREFIX = "musicocr-models-";
 const META_CACHE = "musicocr-meta";
 
@@ -101,13 +122,14 @@ async function download(url, onProgress) {
  * window only means it is downloaded again next time).
  */
 async function fetchCached(file, onProgress) {
-	const url = MODELS_URL + file;
+	const url = urlOf(file);
 	const cached = modelCache ? await modelCache.match(url) : undefined;
 	if (cached) {
 		return readBody(cached, onProgress);
 	}
 	const bytes = await download(url, onProgress);
-	if (modelCache) {
+	// in the app, the bundled files are already on the device
+	if (modelCache && !(IS_APP && isBundled(file))) {
 		try {
 			await modelCache.put(url, new Response(bytes));
 		} catch (error) {
@@ -283,6 +305,48 @@ export async function prepare(size, { onProgress } = {}) {
 		models: createModels(rt, picked, meta),
 		meta: { ...meta, detector: meta.detectors[size], size },
 	};
+}
+
+/**
+ * Whether the files a detector size needs are all at hand: inside the app,
+ * or downloaded (in the model cache).
+ */
+export async function hasModels(size) {
+	await loadMeta(); // opens the model cache
+	for (const file of Object.values(modelFiles(size))) {
+		if (!isBundled(file) && !(await modelCache?.match(urlOf(file)))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/** Download the files a detector size needs into the model cache. */
+export async function fetchModels(size, { onProgress } = {}) {
+	await loadMeta();
+	if (!modelCache) {
+		throw new Error("No model cache: the models cannot be kept");
+	}
+	const files = Object.values(modelFiles(size));
+	for (const [n, file] of files.entries()) {
+		await fetchCached(file, (ratio) =>
+			onProgress?.({
+				stage: `downloading ${file}`,
+				ratio: (n + ratio) / files.length,
+			}),
+		);
+	}
+}
+
+/** Remove a detector size's downloaded files (those not inside the app). */
+export async function removeModels(size) {
+	await loadMeta();
+	for (const file of Object.values(modelFiles(size))) {
+		if (!isBundled(file)) {
+			await modelCache?.delete(urlOf(file));
+			delete sessions[file];
+		}
+	}
 }
 
 /**

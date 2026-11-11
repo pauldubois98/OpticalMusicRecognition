@@ -8,6 +8,9 @@
 //                      staves, musicXml } (with a quad, the page inside it is
 //                      flattened and cleaned first with those settings, see
 //                      capture/index.js)
+//   task "has-models" / "fetch-models" / "remove-models": { size } → whether
+//                      that detector's files are at hand / download them /
+//                      remove the downloaded ones (see engine.js)
 //   task "edit":       { page, ops } → that page with hand edits applied
 //                      (see edit.js), same shape
 // `musicXml` is always the whole score: the pages read so far, joined (see
@@ -19,7 +22,10 @@ import {
 	describeError,
 	detectPage,
 	editRecognition,
+	fetchModels,
+	hasModels,
 	recognize,
+	removeModels,
 } from "./engine.js";
 import { joinTrees } from "./join.js";
 
@@ -86,6 +92,12 @@ async function run(message, onProgress) {
 			edits = run.catch(() => {});
 			return run;
 		}
+		case "has-models":
+			return hasModels(message.size);
+		case "fetch-models":
+			return fetchModels(message.size, { onProgress });
+		case "remove-models":
+			return removeModels(message.size);
 		default:
 			throw new Error(`unknown task ${message.task}`);
 	}

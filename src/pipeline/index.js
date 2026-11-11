@@ -3,10 +3,18 @@
 // The worker runs copisteria's reader (JavaScript port) with the copista
 // networks in ONNX Runtime Web; two detector sizes are offered.
 
-export const engines = [
-	{ id: "2m", name: "Fast — copista-2m (≈16 MB download)" },
-	{ id: "28m", name: "High accuracy — copista-28m (≈124 MB download)" },
-];
+export const engines = import.meta.env?.VITE_APP
+	? [
+			{ id: "2m", name: "Fast — copista-2m" },
+			{ id: "28m", name: "High accuracy — copista-28m (115 MB download)" },
+		]
+	: [
+			{ id: "2m", name: "Fast — copista-2m (≈16 MB download)" },
+			{ id: "28m", name: "High accuracy — copista-28m (≈124 MB download)" },
+		];
+
+/** Whether this is the Android / iOS app (where some models are downloaded). */
+export const isApp = Boolean(import.meta.env?.VITE_APP);
 
 // Pages are read at their own resolution (the reader picks the detector's
 // input size from the staff space); only very large photos are reduced, to
@@ -163,6 +171,21 @@ export function editRecognition(page, ops, { onProgress } = {}) {
 		{ page, ops: JSON.parse(JSON.stringify(ops)) },
 		{ onProgress },
 	);
+}
+
+/** Whether a detector size's model files are at hand (see engine.js). */
+export function hasModels(size) {
+	return call("capture", "has-models", { size });
+}
+
+/** Download a detector size's model files, to keep them. */
+export function fetchModels(size, { onProgress } = {}) {
+	return call("capture", "fetch-models", { size }, { onProgress });
+}
+
+/** Remove a detector size's downloaded model files. */
+export function removeModels(size) {
+	return call("capture", "remove-models", { size });
 }
 
 /**

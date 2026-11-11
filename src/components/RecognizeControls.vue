@@ -20,6 +20,30 @@ const omr = useOmrState();
 			</button>
 			<button v-if="omr.running" class="secondary" @click="omr.stop">Stop</button>
 		</div>
+		<!-- in the app: the high-accuracy models are an optional download -->
+		<div v-if="omr.isApp && omr.models[omr.engineId] !== undefined && omr.engineId !== '2m'" class="row model">
+			<template v-if="omr.models[omr.engineId] === 'ready'">
+				<span class="hint">Downloaded: works offline.</span>
+				<button class="secondary" @click="omr.removeModel(omr.engineId)">
+					Remove (frees 115 MB)
+				</button>
+			</template>
+			<template v-else>
+				<span class="hint">Not in the app: a 115 MB download, kept for offline use.</span>
+				<button
+					:disabled="omr.models[omr.engineId] === 'downloading'"
+					@click="omr.downloadModel(omr.engineId)"
+				>
+					{{ omr.models[omr.engineId] === "downloading" ? "Downloading…" : "Download" }}
+				</button>
+			</template>
+		</div>
+		<template v-if="omr.modelProgress">
+			<div class="progress">
+				<div :style="{ width: `${Math.round(omr.modelProgress.ratio * 100)}%` }"></div>
+			</div>
+			<p class="progress-label">{{ omr.modelProgress.stage }}</p>
+		</template>
 		<template v-if="omr.progress">
 			<div class="progress">
 				<div :style="{ width: `${Math.round(omr.progress.ratio * 100)}%` }"></div>
@@ -29,3 +53,13 @@ const omr = useOmrState();
 		<p v-if="omr.error" class="error">{{ omr.error }}</p>
 	</div>
 </template>
+
+<style scoped>
+.model {
+	margin-top: 0.5rem;
+}
+
+.model .hint {
+	flex: 1 1 14rem;
+}
+</style>

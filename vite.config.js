@@ -1,11 +1,30 @@
+import { readdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
+import { BUNDLED_MODELS } from "./src/pipeline/bundled.js";
+
+/**
+ * The app build (mode "app"): only the bundled models are kept in
+ * dist/models (the others are downloaded in the app).
+ */
+const appModels = () => ({
+	name: "app-models",
+	apply: (_, { mode }) => mode === "app",
+	writeBundle({ dir }) {
+		const models = `${dir}/models`;
+		for (const file of readdirSync(models)) {
+			if (!BUNDLED_MODELS.includes(file)) {
+				rmSync(`${models}/${file}`);
+			}
+		}
+	},
+});
 
 export default defineConfig(({ command }) => ({
 	// The site's path: "/" locally, "/<repo>/" on GitHub Pages (set by CI)
 	base: process.env.BASE_PATH ?? "/",
-	plugins: [vue()],
+	plugins: [vue(), appModels()],
 	resolve: {
 		// Verovio imports node:module only when running under Node; the
 		// browser bundle gets a stub (tests and node scripts keep the real one)
