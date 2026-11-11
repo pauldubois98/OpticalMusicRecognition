@@ -6,6 +6,7 @@
 // one (else a frame of the preview).
 import { Capacitor } from "@capacitor/core";
 import { onBeforeUnmount, ref } from "vue";
+import { imagesFromPhotos, takeCameraPhoto } from "../photos.js";
 import { imageFromSource } from "../pipeline/index.js";
 import { useOmrState } from "../useOmr.js";
 
@@ -31,17 +32,7 @@ async function onFileChange(event) {
 
 /** Add images (Blobs or Files) as pages, in order. */
 async function addPhotos(photos) {
-	const images = [];
-	for (const photo of photos) {
-		const bitmap = await createImageBitmap(photo);
-		images.push({
-			image: imageFromSource(bitmap, bitmap.width, bitmap.height),
-			url: URL.createObjectURL(photo),
-			photo,
-		});
-		bitmap.close();
-	}
-	omr.addImages(images);
+	omr.addImages(await imagesFromPhotos(photos));
 }
 
 const native = Capacitor.isNativePlatform();
@@ -51,21 +42,13 @@ const taking = ref(false); // the phone's camera app is open
 async function takeNativePhoto() {
 	taking.value = true;
 	try {
-		const { Camera } = await import("@capacitor/camera");
-		const { webPath } = await Camera.takePhoto({
-			quality: 92,
-			correctOrientation: true,
-			saveToGallery: false,
-			editable: "no",
-		});
-		const blob = await (await fetch(webPath)).blob();
-		await addPhotos([blob]);
-	} catch (e) {
-		// closing the camera without a photo is not an error
-		if (!/cancel/i.test(String(e?.message ?? e))) {
-			console.error(e);
-			omr.error = `Camera unavailable: ${e?.message ?? e}`;
+		const photo = await takeCameraPhoto();
+		if (photo) {
+			await addPhotos([photo]);
 		}
+	} catch (e) {
+		console.error(e);
+		omr.error = `Camera unavailable: ${e?.message ?? e}`;
 	} finally {
 		taking.value = false;
 	}

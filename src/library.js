@@ -120,6 +120,16 @@ export function deleteStates(id) {
 	});
 }
 
+/** Rename a score (its title). */
+export function renameScore(id, title) {
+	return transaction(["scores"], "readwrite", async (s) => {
+		const score = await done(s.scores.get(id));
+		if (score) {
+			s.scores.put({ ...score, title }, id);
+		}
+	});
+}
+
 /** Delete a score: its record, photos and recognition. */
 export function deleteScore(id) {
 	return transaction(STORES, "readwrite", (s) => {

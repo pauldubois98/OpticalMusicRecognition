@@ -147,14 +147,14 @@ export function exportPages(pages, format) {
 }
 
 /** The score, on A4 pages (PNG at 300 dpi). */
-export async function exportScore(musicXml, format) {
+export async function exportScore(musicXml, format, name = "score") {
 	const svgs = await scorePages(musicXml);
 	if (format === "pdf") {
-		return saveSvgPdf(svgs, "score");
+		return saveSvgPdf(svgs, name);
 	}
 	const canvases = [];
 	for (const svg of svgs) {
 		canvases.push(await svgCanvas(svg, 300 / 25.4));
 	}
-	return savePngs(canvases, "score");
+	return savePngs(canvases, name);
 }

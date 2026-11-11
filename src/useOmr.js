@@ -33,6 +33,7 @@ import {
 	keepStorage,
 	putScore,
 } from "./library.js";
+import { imagesFromPhotos } from "./photos.js";
 import { fullQuad } from "./pipeline/capture/index.js";
 import {
 	detectPageCorners,
@@ -48,7 +49,7 @@ import {
 	saveRecognition,
 	stopRecognition,
 } from "./pipeline/index.js";
-import { buildScore } from "./score.js";
+import { buildScore, withCredits } from "./score.js";
 
 /** The shared state, in a component under App.vue. */
 export const useOmrState = () => inject("omr");
@@ -605,6 +606,34 @@ export function useOmr() {
 		showScore();
 	}
 
+	/** Start a new score with these photos (Blobs) as its pages. */
+	async function newScoreWith(photos) {
+		newScore();
+		addImages(await imagesFromPhotos(photos));
+	}
+
+	/**
+	 * Saved score `id` as it is now (with its edits and credits), without
+	 * opening it: { musicXml, name (for its files) }, or null when it is not
+	 * recognized.
+	 */
+	async function savedMusicXml(id) {
+		const score = await getScore(id);
+		if (!score?.recognized) {
+			return null;
+		}
+		const read = await restoreRecognition(id, score.ops);
+		const name =
+			score.title
+				.trim()
+				.replace(/[\\/:*?"<>|]+/g, "")
+				.slice(0, 80) || "score";
+		return {
+			musicXml: withCredits(read.musicXml, score),
+			name,
+		};
+	}
+
 	/** Leave the score for the menu (it is saved first, if it was saved). */
 	async function closeScore() {
 		if (docId.value) {
@@ -690,6 +719,8 @@ export function useOmr() {
 		opening,
 		openScore,
 		newScore,
+		newScoreWith,
+		savedMusicXml,
 		closeScore,
 		ops,
 		engines,
