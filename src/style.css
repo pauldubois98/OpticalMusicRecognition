@@ -298,6 +298,20 @@ input[type="file"] {
 	vector-effect: non-scaling-stroke;
 }
 
+/* a part's name (picked to rename it); faint when it has none (only the
+   editor shows it) */
+.score-view g.label {
+	cursor: text;
+}
+
+.score-view g.grpSym {
+	cursor: pointer;
+}
+
+.score-view g.label.placeholder {
+	opacity: 0.45;
+}
+
 .score-view g.hovered {
 	color: #e65028;
 	fill: #e65028;

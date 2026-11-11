@@ -16,12 +16,146 @@ const credit = (type, text) =>
 	`<credit page="1"><credit-type>${type}</credit-type>` +
 	`<credit-words ${CREDIT_WORDS[type]}>${escapeXml(text)}</credit-words></credit>`;
 
+// shown in the editor in place of a part's name left empty (hidden in the
+// score itself), so that it can still be picked and named
+export const PART_PLACEHOLDER = "+ name";
+
+/**
+ * The part names: `parts[k]` names part k + 1 (empty: no name shown;
+ * undefined: as written, "Part 1"…); with `placeholders`, an empty one is
+ * PART_PLACEHOLDER instead (for the editor).
+ */
+function withPartNames(xml, parts, placeholders) {
+	return xml.replace(
+		/(<score-part id="P(\d+)">\s*)<part-name\b[^>]*>[^<]*<\/part-name>/g,
+		(tag, open, n) => {
+			const name = parts[Number(n) - 1];
+			if (typeof name !== "string") {
+				return tag;
+			}
+			const text = name.trim();
+			if (text) {
+				return `${open}<part-name>${escapeXml(text)}</part-name>`;
+			}
+			return placeholders
+				? `${open}<part-name>${PART_PLACEHOLDER}</part-name>`
+				: `${open}<part-name print-object="no"></part-name>`;
+		},
+	);
+}
+
+// the brackets: a group of parts (first … last, counted from 0) joined by a
+// symbol at the left of each system, its bar lines through all its staves or
+// not. A part of several staves on its own (a piano) is a group of one part
+// (its brace); a part in a larger group has no symbol of its own.
+export const GROUP_SYMBOLS = ["brace", "bracket", "square", "line", "none"];
+
+/** How many staves each part has, in order. */
+export const partStaves = (xml) =>
+	[...xml.matchAll(/<part id="[^"]*">[\s\S]*?<\/part>/g)].map(([part]) =>
+		Number(part.match(/<staves>(\d+)<\/staves>/)?.[1] ?? 1),
+	);
+
+/**
+ * The score's brackets, as shown: [{ first, last, symbol, barline }] (its
+ * part groups, and the brace of each part of several staves not in one).
+ */
+export function partGroups(xml) {
+	const list = xml.match(/<part-list>[\s\S]*?<\/part-list>/)?.[0] ?? "";
+	const groups = [];
+	const open = new Map(); // number → its group
+	let part = 0;
+	for (const [tag] of list.matchAll(
+		/<part-group\b[^>]*?\/>|<part-group\b[^>]*>[\s\S]*?<\/part-group>|<score-part\b/g,
+	)) {
+		if (tag.startsWith("<score-part")) {
+			part++;
+			continue;
+		}
+		const number = tag.match(/\bnumber="([^"]*)"/)?.[1] ?? "1";
+		if (/\btype="start"/.test(tag)) {
+			const symbol = tag.match(/<group-symbol>\s*([a-z]+)/)?.[1] ?? "none";
+			const barline = tag.match(/<group-barline>\s*([a-zA-Z]+)/)?.[1];
+			open.set(number, {
+				first: part,
+				last: part,
+				symbol: GROUP_SYMBOLS.includes(symbol) ? symbol : "bracket",
+				barline: barline !== "no",
+			});
+		} else if (/\btype="stop"/.test(tag) && open.has(number)) {
+			const g = open.get(number);
+			open.delete(number);
+			g.last = part - 1;
+			if (g.last >= g.first) {
+				groups.push(g);
+			}
+		}
+	}
+	// a part of several staves in no group: its brace (Verovio's own)
+	partStaves(xml).forEach((staves, k) => {
+		if (staves > 1 && !groups.some((g) => g.first <= k && k <= g.last)) {
+			groups.push({ first: k, last: k, symbol: "brace", barline: true });
+		}
+	});
+	return groups.sort((a, b) => a.first - b.first || b.last - a.last);
+}
+
+/**
+ * The MusicXML with these brackets (see partGroups) in place of those it
+ * had; groups past its last part are left out.
+ */
+export function withPartGroups(xml, groups) {
+	const count = (xml.match(/<score-part\b/g) ?? []).length;
+	const kept = groups
+		.filter((g) => g.first <= g.last && g.last < count)
+		.sort((a, b) => a.first - b.first || b.last - a.last); // outer first
+	return xml.replace(/<part-list>[\s\S]*?<\/part-list>/, (list) => {
+		let out = list.replace(
+			/\s*(<part-group\b[^>]*?\/>|<part-group\b[^>]*>[\s\S]*?<\/part-group>)/g,
+			"",
+		);
+		let k = -1;
+		out = out.replace(/<score-part\b[\s\S]*?<\/score-part>/g, (sp) => {
+			k++;
+			const starts = kept
+				.map((g, i) => [g, i + 1])
+				.filter(([g]) => g.first === k)
+				.map(
+					([g, n]) =>
+						`<part-group type="start" number="${n}"><group-symbol>${g.symbol}</group-symbol>` +
+						`<group-barline>${g.barline ? "yes" : "no"}</group-barline></part-group>`,
+				);
+			const stops = kept
+				.map((g, i) => [g, i + 1])
+				.filter(([g]) => g.last === k)
+				.reverse() // inner first
+				.map(([, n]) => `<part-group type="stop" number="${n}"/>`);
+			return [...starts, sp, ...stops].join("");
+		});
+		return out;
+	});
+}
+
 /**
  * The MusicXML with this title and composer (either may be empty: none), in
- * place of those it had.
+ * place of those it had, the parts' names (see withPartNames) and, unless
+ * null, these brackets (see withPartGroups).
  */
-export function withCredits(musicXml, { title = "", composer = "" } = {}) {
-	let xml = musicXml
+export function withCredits(
+	musicXml,
+	{
+		title = "",
+		composer = "",
+		parts = [],
+		groups = null,
+		placeholders = false,
+	} = {},
+) {
+	let xml = withPartNames(
+		groups ? withPartGroups(musicXml, groups) : musicXml,
+		parts ?? [],
+		placeholders,
+	)
 		.replace(/<work>[\s\S]*?<\/work>/, "")
 		.replace(/<creator type="composer">[\s\S]*?<\/creator>/, "")
 		.replace(
@@ -72,8 +206,19 @@ export async function buildScore(pageResults, xml, credits = {}) {
 		]),
 	);
 	summary.pages = pageResults.length;
+	// in the editor, the parts left without a name show a placeholder (marked
+	// "placeholder", to be drawn faint)
+	const shown = withCredits(xml, { ...credits, placeholders: true });
 	const svg =
-		summary.notes + summary.rests > 0 ? await renderMusicXml(musicXml) : [];
+		summary.notes + summary.rests > 0
+			? (await renderMusicXml(shown)).map((page) =>
+					page.replace(/<g id="[^"]+" class="label">[\s\S]*?<\/g>/g, (g) =>
+						g.includes(`>${PART_PLACEHOLDER}<`)
+							? g.replace('class="label"', 'class="label placeholder"')
+							: g,
+					),
+				)
+			: [];
 	return {
 		pageResults,
 		musicXml,

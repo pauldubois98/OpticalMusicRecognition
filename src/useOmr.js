@@ -69,6 +69,10 @@ export function useOmr() {
 	// the score's title and composer (kept from one recognition to the next)
 	const title = ref("");
 	const composer = ref("");
+	// the parts' names, by part (a string; empty: none shown; null: "Part n")
+	const partNames = ref([]);
+	// the brackets (see score.js partGroups), once edited; null: as read
+	const partGroups = ref(null);
 
 	const evening = ref(100);
 	const lighting = ref(100);
@@ -412,6 +416,8 @@ export function useOmr() {
 			const score = await buildScore(pageResults, musicXml, {
 				title: title.value,
 				composer: composer.value,
+				parts: partNames.value,
+				groups: partGroups.value,
 			});
 			if (run !== recognitionRun) {
 				return;
@@ -464,6 +470,9 @@ export function useOmr() {
 	const savedForm = () => ({
 		title: title.value,
 		composer: composer.value,
+		partNames: [...partNames.value],
+		partGroups:
+			partGroups.value && JSON.parse(JSON.stringify(partGroups.value)),
 		pageCount: pages.value.length,
 		recognized: result.value !== null,
 		ops: JSON.parse(JSON.stringify(ops.value)),
@@ -578,6 +587,8 @@ export function useOmr() {
 		error.value = null;
 		title.value = "";
 		composer.value = "";
+		partNames.value = [];
+		partGroups.value = null;
 		lastSaved = "";
 		savedPhotos = new Set();
 		thumb = null;
@@ -629,7 +640,12 @@ export function useOmr() {
 				.replace(/[\\/:*?"<>|]+/g, "")
 				.slice(0, 80) || "score";
 		return {
-			musicXml: withCredits(read.musicXml, score),
+			musicXml: withCredits(read.musicXml, {
+				title: score.title,
+				composer: score.composer,
+				parts: score.partNames,
+				groups: score.partGroups ?? null,
+			}),
 			name,
 		};
 	}
@@ -683,6 +699,8 @@ export function useOmr() {
 			strength.value = s.strength;
 			title.value = score.title;
 			composer.value = score.composer;
+			partNames.value = score.partNames ?? [];
+			partGroups.value = score.partGroups ?? null;
 			pages.value = restored;
 			if (score.recognized) {
 				const read = await restoreRecognition(id, score.ops);
@@ -691,6 +709,8 @@ export function useOmr() {
 					await buildScore(read.pages, read.musicXml, {
 						title: title.value,
 						composer: composer.value,
+						parts: partNames.value,
+						groups: partGroups.value,
 					}),
 				);
 			}
@@ -737,6 +757,8 @@ export function useOmr() {
 		result,
 		title,
 		composer,
+		partNames,
+		partGroups,
 		evening,
 		lighting,
 		cleaning,

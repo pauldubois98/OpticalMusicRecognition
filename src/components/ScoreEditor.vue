@@ -30,7 +30,12 @@ import {
 import { editRecognition } from "../pipeline/index.js";
 import { addedDet, boxKey, VALUES } from "../pipeline/place.js";
 import { musicXmlToMidi } from "../render/verovio.js";
-import { buildScore } from "../score.js";
+import {
+	buildScore,
+	GROUP_SYMBOLS,
+	partGroups,
+	partStaves as stavesOfParts,
+} from "../score.js";
 import { useOmrState } from "../useOmr.js";
 import AddSymbols from "./AddSymbols.vue";
 import ExportButtons from "./ExportButtons.vue";
@@ -45,7 +50,12 @@ const props = defineProps({
 });
 
 const omr = useOmrState();
-const credits = () => ({ title: omr.title, composer: omr.composer });
+const credits = () => ({
+	title: omr.title,
+	composer: omr.composer,
+	parts: omr.partNames,
+	groups: omr.partGroups,
+});
 
 const result = shallowRef(props.initial);
 // the hand edits (kept in the shared state too: a saved score keeps them)
@@ -187,7 +197,248 @@ async function showCredits() {
 		}
 	}
 }
-watch(() => [omr.title, omr.composer], showCredits);
+watch(
+	() => [
+		omr.title,
+		omr.composer,
+		JSON.stringify(omr.partNames),
+		JSON.stringify(omr.partGroups),
+	],
+	showCredits,
+);
+
+// ------------------------------------------------------------ part names
+//
+// A part's name, at the left of its first system ("Part 1"…), picked on the
+// score: Verovio draws the names apart from their staves, so a name is its
+// part's by height (the part whose staves it is level with).
+
+const selectedPart = ref(null); // the part picked (0, 1, …), or null
+const partDraft = ref("");
+
+/** How many staves each part has, in order (from the score). */
+const partStaves = computed(() => stavesOfParts(result.value.musicXml));
+
+/**
+ * Where parts first … last are on the system of `el` (a name or bracket
+ * drawn there): their staves' top and bottom on the screen, or null.
+ */
+function partsSpan(el, first, last) {
+	const staves = [
+		...(el.parentElement
+			?.querySelector(".measure")
+			?.querySelectorAll(":scope > .staff") ?? []),
+	];
+	const from = partStaves.value.slice(0, first).reduce((a, b) => a + b, 0);
+	const to =
+		from +
+		partStaves.value.slice(first, last + 1).reduce((a, b) => a + b, 0) -
+		1;
+	if (!staves[from] || !staves[to]) {
+		return null;
+	}
+	return {
+		top: staves[from].getBoundingClientRect().top,
+		bottom: staves[to].getBoundingClientRect().bottom,
+	};
+}
+
+/** The part a name (a "label" element of the score) belongs to. */
+function partOfLabel(label) {
+	const box = label.getBoundingClientRect();
+	const y = (box.top + box.bottom) / 2;
+	let best = null;
+	let bestDistance = Number.POSITIVE_INFINITY;
+	partStaves.value.forEach((_, k) => {
+		const span = partsSpan(label, k, k);
+		if (span) {
+			const d =
+				y < span.top ? span.top - y : y > span.bottom ? y - span.bottom : 0;
+			if (d < bestDistance) {
+				bestDistance = d;
+				best = k;
+			}
+		}
+	});
+	return best;
+}
+
+// ---------------------------------------------------------------- brackets
+//
+// The brackets and braces at the left of the systems (see score.js
+// partGroups): picked on the score (by height, as the names), or from a
+// part's panel (those drawn as nothing too); their shape, the parts they
+// join and their bar lines edited, or deleted; new ones added from a part.
+
+const groups = computed(() => partGroups(result.value.musicXml));
+const groupKey = (g) => `${g.first}-${g.last}`;
+const selectedGroupKey = ref(null);
+const selectedGroup = computed(
+	() =>
+		groups.value.find((g) => groupKey(g) === selectedGroupKey.value) ?? null,
+);
+const SYMBOL_NAMES = {
+	brace: "Brace",
+	bracket: "Bracket",
+	square: "Square",
+	line: "Line",
+	none: "None",
+};
+const partsName = (g) =>
+	g.first === g.last
+		? `part ${g.first + 1}`
+		: `parts ${g.first + 1}–${g.last + 1}`;
+
+/** The group a bracket drawn on the score (a "grpSym" element) shows. */
+function groupOfSym(el) {
+	const box = el.getBoundingClientRect();
+	let best = null;
+	let bestDistance = Number.POSITIVE_INFINITY;
+	for (const g of groups.value) {
+		const span = partsSpan(el, g.first, g.last);
+		if (span) {
+			const d =
+				Math.abs(span.top - box.top) + Math.abs(span.bottom - box.bottom);
+			if (d < bestDistance) {
+				bestDistance = d;
+				best = g;
+			}
+		}
+	}
+	return best;
+}
+
+/**
+ * The bracket drawn at a click, if any: thin ones (a line, a brace's
+ * strokes) are hard to hit, so a little to either side counts too.
+ */
+function bracketAt({ target, clientX: x, clientY: y, pointerType }) {
+	const hit = target?.closest?.(".grpSym");
+	if (hit) {
+		return hit;
+	}
+	const margin = pointerType === "touch" ? 16 : 8;
+	for (const el of scoreEl.value?.querySelectorAll(".grpSym") ?? []) {
+		const r = el.getBoundingClientRect();
+		if (
+			x >= r.left - margin &&
+			x <= r.right + margin &&
+			y >= r.top &&
+			y <= r.bottom
+		) {
+			return el;
+		}
+	}
+	return null;
+}
+
+function pickGroup(g) {
+	selectedKey.value = null;
+	selectedPart.value = null;
+	selectedGroupKey.value = g ? groupKey(g) : null;
+}
+
+/** The brackets edited: `change` maps the list (copies) to the new one. */
+function editGroups(change) {
+	omr.partGroups = change(groups.value.map((g) => ({ ...g })));
+}
+
+function setGroup(field, value) {
+	const key = selectedGroupKey.value;
+	editGroups((list) =>
+		list.map((g) => (groupKey(g) === key ? { ...g, [field]: value } : g)),
+	);
+}
+
+/** Whether the selected bracket's top ("first") or bottom ("last") can move. */
+function canMoveGroup(end, step) {
+	const g = selectedGroup.value;
+	if (!g) {
+		return false;
+	}
+	const moved = { ...g, [end]: g[end] + step };
+	return (
+		moved.first >= 0 &&
+		moved.last < partStaves.value.length &&
+		moved.first <= moved.last &&
+		!groups.value.some((x) => groupKey(x) === groupKey(moved))
+	);
+}
+
+/** Move the selected bracket's top ("first") or bottom ("last") a part. */
+function moveGroupEnd(end, step) {
+	const g = selectedGroup.value;
+	if (!canMoveGroup(end, step)) {
+		return;
+	}
+	const moved = { ...g, [end]: g[end] + step };
+	const key = groupKey(g);
+	editGroups((list) => list.map((x) => (groupKey(x) === key ? moved : x)));
+	selectedGroupKey.value = groupKey(moved);
+}
+
+/**
+ * Delete the selected bracket (a part of several staves keeps a group of
+ * its own, drawn as nothing: else it would show its brace again).
+ */
+function deleteGroup() {
+	const g = selectedGroup.value;
+	if (!g) {
+		return;
+	}
+	const key = groupKey(g);
+	const own = g.first === g.last && partStaves.value[g.first] > 1;
+	editGroups((list) =>
+		own
+			? list.map((x) => (groupKey(x) === key ? { ...x, symbol: "none" } : x))
+			: list.filter((x) => groupKey(x) !== key),
+	);
+	if (!own) {
+		selectedGroupKey.value = null;
+	}
+}
+
+/** A new bracket around part k (to be stretched over the next ones). */
+function addGroup(k) {
+	const g = { first: k, last: k, symbol: "bracket", barline: true };
+	if (!groups.value.some((x) => groupKey(x) === groupKey(g))) {
+		editGroups((list) => [...list, g]);
+	}
+	pickGroup(g);
+}
+
+/** The brackets part k is in (for its panel). */
+const partGroupsOf = (k) =>
+	groups.value.filter((g) => g.first <= k && k <= g.last);
+
+function pickPart(k) {
+	selectedKey.value = null;
+	selectedGroupKey.value = null;
+	selectedPart.value = k;
+	const name = omr.partNames[k];
+	partDraft.value = typeof name === "string" ? name : `Part ${k + 1}`;
+}
+
+/** Name the picked part (empty: no name shown). */
+function namePart() {
+	const k = selectedPart.value;
+	if (k === null) {
+		return;
+	}
+	const names = [...omr.partNames];
+	while (names.length < k) {
+		names.push(null);
+	}
+	names[k] = partDraft.value.trim();
+	omr.partNames = names;
+}
+
+watch(selectedKey, (key) => {
+	if (key !== null) {
+		selectedPart.value = null;
+		selectedGroupKey.value = null;
+	}
+});
 
 function apply(op, select = null) {
 	ops.value = [...ops.value, op];
@@ -611,6 +862,24 @@ function onPointerMove(event) {
 }
 
 function onScoreClick(event) {
+	const sym = bracketAt(event);
+	if (sym && !picking.value) {
+		const g = groupOfSym(sym);
+		if (g) {
+			pickGroup(g);
+			return;
+		}
+	}
+	selectedGroupKey.value = null;
+	const label = event.target?.closest?.(".label");
+	if (label && !picking.value) {
+		const k = partOfLabel(label);
+		if (k !== null) {
+			pickPart(k);
+			return;
+		}
+	}
+	selectedPart.value = null;
 	const s = nearest(event);
 	if (picking.value) {
 		if (s) {
@@ -644,15 +913,33 @@ async function markScore() {
 		el.classList.add("hovered");
 	}
 	const els = find(selected.value?.id);
+	if (selectedGroup.value) {
+		const key = groupKey(selectedGroup.value);
+		for (const sym of scoreEl.value.querySelectorAll(".grpSym")) {
+			const g = groupOfSym(sym);
+			if (g && groupKey(g) === key) {
+				els.push(sym);
+			}
+		}
+	}
+	if (selectedPart.value !== null) {
+		for (const label of scoreEl.value.querySelectorAll(".label")) {
+			if (partOfLabel(label) === selectedPart.value) {
+				els.push(label);
+			}
+		}
+	}
 	for (const el of els) {
 		el.classList.add("selected");
 	}
 	return els[0] ?? null;
 }
 
-watch([hoveredId, () => selected.value?.id, result], markScore, {
-	flush: "post",
-});
+watch(
+	[hoveredId, () => selected.value?.id, selectedPart, selectedGroup, result],
+	markScore,
+	{ flush: "post" },
+);
 watch(
 	() => selected.value?.id,
 	async () => {
@@ -703,6 +990,8 @@ function onKey(event) {
 			adding.value = false;
 		} else {
 			selectedKey.value = null;
+			selectedPart.value = null;
+			selectedGroupKey.value = null;
 		}
 		return;
 	}
@@ -954,7 +1243,7 @@ async function downloadMidi() {
 				<span v-else-if="pickHint" class="error">{{ pickHint }}</span>
 				<span v-else class="hint">
 					A first draft: click a note, tie, slur, hairpin or dynamic to correct
-					it.
+					it, or a part's name to rename it.
 				</span>
 			</p>
 			<div v-if="result.svg.length > 0" class="group zoom" aria-label="Zoom">
@@ -992,7 +1281,83 @@ async function downloadMidi() {
 				</div>
 			</div>
 			<!-- beside the score; on a phone, a sheet at the bottom while a symbol is selected -->
-			<div class="side" :class="{ open: !!selected }">
+			<div class="side" :class="{ open: !!selected || selectedPart !== null || !!selectedGroup }">
+				<div v-if="selectedPart !== null && !selected" class="note-editor">
+					<div class="note-title">
+						<strong>Part {{ selectedPart + 1 }}{{ partStaves.length > 1 ? ` of ${partStaves.length}` : "" }}</strong>
+						<button class="link" title="Deselect (Esc)" @click="selectedPart = null">✕</button>
+					</div>
+					<div class="rows">
+						<span class="label">Name</span>
+						<div class="group">
+							<input
+								v-model="partDraft"
+								class="part-name"
+								type="text"
+								placeholder="No name"
+								aria-label="Part name"
+								@change="namePart"
+								@keydown.enter="namePart"
+							/>
+						</div>
+					</div>
+					<div class="rows">
+						<span class="label">Brackets</span>
+						<div class="group" aria-label="Brackets">
+							<button
+								v-for="g in partGroupsOf(selectedPart)"
+								:key="groupKey(g)"
+								:title="`Select this ${SYMBOL_NAMES[g.symbol].toLowerCase()}`"
+								@click="pickGroup(g)"
+							>
+								{{ SYMBOL_NAMES[g.symbol] }} · {{ partsName(g) }}
+							</button>
+							<button title="A bracket from this part (then stretch it over the next ones)" @click="addGroup(selectedPart)">
+								+ Bracket
+							</button>
+						</div>
+					</div>
+					<p class="hint">The name is printed at the left of the first system. Leave it empty to print no name.</p>
+				</div>
+				<div v-if="selectedGroup && !selected" class="note-editor">
+					<div class="note-title">
+						<strong>{{ SYMBOL_NAMES[selectedGroup.symbol] }} · {{ partsName(selectedGroup) }}</strong>
+						<button class="link" title="Deselect (Esc)" @click="selectedGroupKey = null">✕</button>
+					</div>
+					<div class="rows">
+						<span class="label">Shape</span>
+						<div class="group" aria-label="Shape">
+							<button
+								v-for="sym in GROUP_SYMBOLS"
+								:key="sym"
+								:aria-pressed="selectedGroup.symbol === sym"
+								@click="setGroup('symbol', sym)"
+							>
+								{{ SYMBOL_NAMES[sym] }}
+							</button>
+						</div>
+						<span class="label">Top</span>
+						<div class="group" aria-label="Top">
+							<button title="Start a part higher" :disabled="!canMoveGroup('first', -1)" @click="moveGroupEnd('first', -1)">▲</button>
+							<button title="Start a part lower" :disabled="!canMoveGroup('first', 1)" @click="moveGroupEnd('first', 1)">▼</button>
+							<span class="hint">part {{ selectedGroup.first + 1 }}</span>
+						</div>
+						<span class="label">Bottom</span>
+						<div class="group" aria-label="Bottom">
+							<button title="End a part higher" :disabled="!canMoveGroup('last', -1)" @click="moveGroupEnd('last', -1)">▲</button>
+							<button title="End a part lower" :disabled="!canMoveGroup('last', 1)" @click="moveGroupEnd('last', 1)">▼</button>
+							<span class="hint">part {{ selectedGroup.last + 1 }}</span>
+						</div>
+						<span class="label">Bar lines</span>
+						<div class="group" aria-label="Bar lines">
+							<button :aria-pressed="selectedGroup.barline" title="Bar lines through all its staves" @click="setGroup('barline', true)">Through</button>
+							<button :aria-pressed="!selectedGroup.barline" title="Bar lines on each staff only" @click="setGroup('barline', false)">Per staff</button>
+						</div>
+					</div>
+					<div class="actions">
+						<button class="danger" title="Delete this bracket" @click="deleteGroup">Delete</button>
+					</div>
+				</div>
 				<div v-if="selected" class="note-editor">
 					<div class="note-title">
 						<strong>{{ describe(selected) }}</strong>
@@ -1191,6 +1556,17 @@ async function downloadMidi() {
 </template>
 
 <style scoped>
+.part-name {
+	flex: 1;
+	min-width: 0;
+	padding: 0.45rem 0.6rem;
+	background: var(--panel);
+	color: var(--ink);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	font-size: 0.95rem;
+}
+
 .credits {
 	display: flex;
 	flex-wrap: wrap;
