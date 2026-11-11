@@ -28,6 +28,7 @@ async function onFileChange(event) {
 		images.push({
 			image: imageFromSource(bitmap, bitmap.width, bitmap.height),
 			url: URL.createObjectURL(file),
+			photo: file,
 		});
 		bitmap.close();
 	}
@@ -51,7 +52,7 @@ async function startCamera() {
 	}
 }
 
-function capturePhoto() {
+async function capturePhoto() {
 	const video = videoEl.value;
 	if (!video || video.videoWidth === 0) {
 		return;
@@ -64,7 +65,8 @@ function capturePhoto() {
 		.getContext("2d")
 		.putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
 	stopCamera();
-	omr.addImages([{ image, url: canvas.toDataURL("image/png") }]);
+	const photo = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.92));
+	omr.addImages([{ image, url: URL.createObjectURL(photo), photo }]);
 }
 
 function stopCamera() {

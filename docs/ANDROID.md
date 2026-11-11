@@ -8,6 +8,7 @@ The app is the web app inside a native shell, made with
 - **Models.** The app ships with the fast detector (copista-2m) and the page finder (DocAligner), about 21 MB, listed in `src/pipeline/bundled.js`.
   - The high-accuracy detector (copista-28m, 115 MB) is an optional download in the app ("Download" / "Remove" under the recognizer).
   - It comes from Hugging Face, pinned to a commit in `.env.app` (`VITE_EXTRA_MODELS_URL`). When you re-export the models, upload them and update that commit.
+- **My scores.** The app opens on a menu of the saved scores. A score is saved when it is first recognized, then after every change. Saved with it: the photos, corners, settings, title, composer, the recognition and the edits, so it reopens without being recognized again. It is kept in the app's own database on the phone (`src/library.js`). The phone's Back button returns from a score to the menu.
 - **Exports** (MusicXML, MIDI, PNG, PDF) open the Android share sheet: save to Files or Drive, send, or open in another app. See `src/download.js`.
 - The app build is `npm run build:app`, which is `vite build --mode app` and reads `.env.app`.
 

@@ -16,8 +16,23 @@
 // like the previews, and joins them into one score. It never blocks the
 // controls: Stop cancels it, Recognize restarts it, and changing its input
 // stops it.
-import { computed, inject, markRaw, reactive, ref } from "vue";
+import {
+	computed,
+	inject,
+	markRaw,
+	reactive,
+	ref,
+	shallowRef,
+	watch,
+} from "vue";
 import { canvasOf } from "./export.js";
+import {
+	deleteStates,
+	getPhotos,
+	getScore,
+	keepStorage,
+	putScore,
+} from "./library.js";
 import { fullQuad } from "./pipeline/capture/index.js";
 import {
 	detectPageCorners,
@@ -25,9 +40,12 @@ import {
 	fetchModels,
 	flattenPage,
 	hasModels,
+	imageFromSource,
 	isApp,
 	removeModels,
+	restoreRecognition,
 	runPipeline,
+	saveRecognition,
 	stopRecognition,
 } from "./pipeline/index.js";
 import { buildScore } from "./score.js";
@@ -45,6 +63,8 @@ export function useOmr() {
 	// the recognition (see score.js buildScore), edited in ScoreEditor (a new
 	// one starts it afresh)
 	const result = ref(null);
+	// the hand edits on it (see pipeline/edit.js; ScoreEditor keeps them here)
+	const ops = shallowRef([]);
 	// the score's title and composer (kept from one recognition to the next)
 	const title = ref("");
 	const composer = ref("");
@@ -142,6 +162,7 @@ export function useOmr() {
 		stop();
 		error.value = null;
 		result.value = null;
+		ops.value = [];
 	}
 
 	// ------------------------------------------------------------ the pages
@@ -154,9 +175,11 @@ export function useOmr() {
 			return;
 		}
 		resetResult();
-		const added = images.map(({ image, url }) =>
+		const added = images.map(({ image, url, photo }) =>
 			reactive({
 				id: ++nextPageId,
+				key: crypto.randomUUID(), // its name in the saved score
+				photo: photo && markRaw(photo), // the image as added (a Blob)
 				image: markRaw(image),
 				previewUrl: url,
 				quad: fullQuad(image.width, image.height),
@@ -393,6 +416,9 @@ export function useOmr() {
 				return;
 			}
 			result.value = markRaw(score);
+			if (isApp) {
+				await saveRecognized();
+			}
 		} catch (e) {
 			if (run === recognitionRun) {
 				console.error(e);
@@ -406,7 +432,266 @@ export function useOmr() {
 		}
 	}
 
+	// ------------------------------------------------- saved scores (the app)
+	//
+	// In the app, the scores are kept (library.js) and listed on the main
+	// menu: a score is saved when first recognized, then again after every
+	// change (photos, corners, settings, title, edits…), and can be reopened
+	// as it was. On the website there is one score, not kept.
+
+	const screen = ref(isApp ? "menu" : "score"); // "menu" | "score"
+	const docId = ref(null); // the saved score shown (null: not saved yet)
+	const opening = ref(null); // the id of the score being opened
+	let created = 0;
+	let lastSaved = ""; // what was last saved (see savedForm)
+	let savedPhotos = new Set(); // the pages whose photo is saved
+	let thumb = null; // the first page, small (a JPEG Blob)
+	let thumbOf = ""; // … of which page as prepared (see pageForm)
+
+	const pageForm = (p) => ({
+		key: p.key,
+		quad: p.quad?.map(([x, y]) => [x, y]) ?? null,
+		detectedQuad: p.detectedQuad?.map(([x, y]) => [x, y]) ?? null,
+		captureState: p.captureState === "detecting" ? "not-found" : p.captureState,
+		evening: p.evening,
+		lighting: p.lighting,
+		cleaning: p.cleaning,
+		strength: p.strength,
+	});
+
+	/** The saved score's fields (but its dates and thumbnail). */
+	const savedForm = () => ({
+		title: title.value,
+		composer: composer.value,
+		pageCount: pages.value.length,
+		recognized: result.value !== null,
+		ops: JSON.parse(JSON.stringify(ops.value)),
+		settings: {
+			engineId: engineId.value,
+			perPage: perPage.value,
+			evening: evening.value,
+			lighting: lighting.value,
+			cleaning: cleaning.value,
+			strength: strength.value,
+		},
+		pages: pages.value.map(pageForm),
+	});
+
+	/** The first page, small, when it changed (and is ready); else null. */
+	async function newThumbnail() {
+		const first = pages.value[0];
+		const form = first && JSON.stringify([pageForm(first), perPage.value]);
+		if (!first?.pageImage || first.flattening || form === thumbOf) {
+			return null;
+		}
+		const big = canvasOf(first.pageImage);
+		const canvas = document.createElement("canvas");
+		canvas.width = 360;
+		canvas.height = Math.round((360 * big.height) / big.width);
+		canvas.getContext("2d").drawImage(big, 0, 0, canvas.width, canvas.height);
+		const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.8));
+		thumbOf = form;
+		return blob;
+	}
+
+	let saving = Promise.resolve();
+	let saveTimer = null;
+
+	async function saveNow() {
+		const id = docId.value;
+		if (!id) {
+			return;
+		}
+		const form = savedForm();
+		const text = JSON.stringify(form);
+		const newThumb = await newThumbnail();
+		if (text === lastSaved && !newThumb) {
+			return;
+		}
+		thumb = newThumb ?? thumb;
+		const photos = new Map(
+			pages.value
+				.filter((p) => !savedPhotos.has(p.key) && p.photo)
+				.map((p) => [p.key, p.photo]),
+		);
+		await putScore(
+			{ id, created, updated: Date.now(), thumb, ...form },
+			photos,
+		);
+		for (const key of photos.keys()) {
+			savedPhotos.add(key);
+		}
+		if (!form.recognized && !running.value) {
+			await deleteStates(id); // the recognition no longer matches
+		}
+		lastSaved = text;
+	}
+
+	/** Save the score (in turn after any save in progress). */
+	function save() {
+		clearTimeout(saveTimer);
+		saveTimer = null;
+		saving = saving.then(saveNow).catch((e) => {
+			console.error(e);
+			error.value = `Could not save the score: ${e.message}`;
+		});
+		return saving;
+	}
+
+	// saved shortly after any change
+	watch(
+		() =>
+			docId.value && [JSON.stringify(savedForm()), pages.value[0]?.pageImage],
+		(changed) => {
+			if (changed) {
+				clearTimeout(saveTimer);
+				saveTimer = setTimeout(save, 500);
+			}
+		},
+	);
+
+	/** A recognition just finished: the score saved, with its recognition. */
+	async function saveRecognized() {
+		if (!docId.value) {
+			docId.value = crypto.randomUUID();
+			created = Date.now();
+			keepStorage();
+		}
+		await save(); // after the saves before (which drop the old recognition)
+		await saveRecognition(docId.value);
+	}
+
+	/** Back to an empty score (nothing kept: see closeScore). */
+	function clearScore() {
+		clearTimeout(saveTimer);
+		saveTimer = null;
+		docId.value = null;
+		stop();
+		for (const p of pages.value) {
+			releasePage(p);
+		}
+		pages.value = [];
+		currentIndex.value = 0;
+		result.value = null;
+		ops.value = [];
+		error.value = null;
+		title.value = "";
+		composer.value = "";
+		lastSaved = "";
+		savedPhotos = new Set();
+		thumb = null;
+		thumbOf = "";
+	}
+
+	// the phone's Back button: from a score to the menu, from the menu out
+	const showScore = () => {
+		screen.value = "score";
+	};
+	if (isApp) {
+		import("@capacitor/app").then(({ App }) =>
+			App.addListener("backButton", () => {
+				if (screen.value === "score") {
+					closeScore();
+				} else {
+					App.exitApp();
+				}
+			}),
+		);
+	}
+
+	/** Start a new score (from the menu). */
+	function newScore() {
+		clearScore();
+		showScore();
+	}
+
+	/** Leave the score for the menu (it is saved first, if it was saved). */
+	async function closeScore() {
+		if (docId.value) {
+			await save();
+		}
+		clearScore();
+		screen.value = "menu";
+	}
+
+	/** Open saved score `id` as it was left. */
+	async function openScore(id) {
+		opening.value = id;
+		error.value = null;
+		try {
+			clearScore();
+			const [score, photos] = await Promise.all([getScore(id), getPhotos(id)]);
+			if (!score) {
+				throw new Error("This score was not found");
+			}
+			const restored = [];
+			for (const p of score.pages) {
+				const photo = photos.get(p.key);
+				const bitmap = await createImageBitmap(photo);
+				const image = imageFromSource(bitmap, bitmap.width, bitmap.height);
+				bitmap.close();
+				restored.push(
+					reactive({
+						...p,
+						id: ++nextPageId,
+						photo: markRaw(photo),
+						image: markRaw(image),
+						previewUrl: URL.createObjectURL(photo),
+						pageImage: null,
+						pageUrl: null,
+						flattening: false,
+						flattenRun: 0,
+						captureError: null,
+					}),
+				);
+			}
+			const s = score.settings;
+			engineId.value = s.engineId;
+			perPage.value = s.perPage;
+			evening.value = s.evening;
+			lighting.value = s.lighting;
+			cleaning.value = s.cleaning;
+			strength.value = s.strength;
+			title.value = score.title;
+			composer.value = score.composer;
+			pages.value = restored;
+			if (score.recognized) {
+				const read = await restoreRecognition(id, score.ops);
+				ops.value = score.ops;
+				result.value = markRaw(
+					await buildScore(read.pages, read.musicXml, {
+						title: title.value,
+						composer: composer.value,
+					}),
+				);
+			}
+			docId.value = id;
+			created = score.created;
+			savedPhotos = new Set(score.pages.map((p) => p.key));
+			thumb = score.thumb;
+			thumbOf = restored[0]
+				? JSON.stringify([pageForm(restored[0]), perPage.value])
+				: "";
+			lastSaved = JSON.stringify(savedForm());
+			showScore();
+			refreshPages(restored); // the pages prepared again, as they were
+		} catch (e) {
+			console.error(e);
+			clearScore();
+			error.value = `Could not open the score: ${e.message}`;
+		} finally {
+			opening.value = null;
+		}
+	}
+
 	return reactive({
+		screen,
+		docId,
+		opening,
+		openScore,
+		newScore,
+		closeScore,
+		ops,
 		engines,
 		engineId,
 		isApp,

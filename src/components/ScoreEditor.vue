@@ -48,7 +48,11 @@ const omr = useOmrState();
 const credits = () => ({ title: omr.title, composer: omr.composer });
 
 const result = shallowRef(props.initial);
-const ops = shallowRef([]);
+// the hand edits (kept in the shared state too: a saved score keeps them)
+const ops = shallowRef(omr.ops ?? []);
+watch(ops, (v) => {
+	omr.ops = v;
+});
 const undone = shallowRef([]); // for redo, the last undone last
 const editing = ref(false);
 const editProgress = ref(null);

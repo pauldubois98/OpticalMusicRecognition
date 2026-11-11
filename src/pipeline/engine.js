@@ -11,6 +11,7 @@ import ortMjsUrl from "onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url";
 import ortWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url";
 import { BUNDLED_MODELS } from "./bundled.js";
 import { DOCALIGNER_FILE, detectCorners } from "./capture/docaligner.js";
+import { Sym } from "./copisteria/front.js";
 import { rgbaToGray } from "./copisteria/image.js";
 import { recognizePage } from "./copisteria/index.js";
 import { readRevised } from "./copisteria/read.js";
@@ -347,6 +348,39 @@ export async function removeModels(size) {
 			delete sessions[file];
 		}
 	}
+}
+
+/**
+ * A page's state as stored (see library.js): the reading before any added
+ * symbols (those are read again when the edits are replayed).
+ */
+export const storedState = (state) => ({
+	...state,
+	reading: state.base,
+	adds: "[]",
+});
+
+/**
+ * A stored state made usable again: the database keeps plain objects, so the
+ * reader's symbols get their class back (Sym: its getters).
+ */
+export function reviveState(state) {
+	const seen = new Set();
+	const walk = (o) => {
+		if (!o || typeof o !== "object" || seen.has(o) || ArrayBuffer.isView(o)) {
+			return;
+		}
+		seen.add(o);
+		if (o.post instanceof Map && "cand" in o && "synthetic" in o) {
+			Object.setPrototypeOf(o, Sym.prototype);
+		}
+		for (const v of o instanceof Map ? o.values() : Object.values(o)) {
+			walk(v);
+		}
+	};
+	walk(state.base);
+	walk(state.reading);
+	return state;
 }
 
 /**

@@ -98,7 +98,7 @@ function call(kind, task, payload, { onProgress } = {}) {
 		pending[kind].add(fail);
 		w.addEventListener("message", onMessage);
 		w.addEventListener("error", onError);
-		w.postMessage({ id, task, ...payload });
+		w.postMessage({ ...payload, id, task }); // the run's id, whatever the payload
 	});
 }
 
@@ -169,6 +169,27 @@ export function editRecognition(page, ops, { onProgress } = {}) {
 		"recognize",
 		"edit",
 		{ page, ops: JSON.parse(JSON.stringify(ops)) },
+		{ onProgress },
+	);
+}
+
+/**
+ * Store the last recognition (all its pages) as saved score `id`'s, from the
+ * recognition worker (see library.js).
+ */
+export function saveRecognition(id) {
+	return call("recognize", "save", { scoreId: id });
+}
+
+/**
+ * Make saved score `id`'s recognition the current one, with its hand edits
+ * `ops` applied: { pages (each page's result, as runPipeline's), musicXml }.
+ */
+export function restoreRecognition(id, ops, { onProgress } = {}) {
+	return call(
+		"recognize",
+		"restore",
+		{ scoreId: id, ops: JSON.parse(JSON.stringify(ops)) },
 		{ onProgress },
 	);
 }
