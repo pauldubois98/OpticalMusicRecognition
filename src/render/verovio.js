@@ -101,6 +101,7 @@ export async function renderMusicXml(musicXml, options = {}) {
 		pageMarginTop: 150, // room above the title (default 50)
 		bottomMarginHeader: 12, // and below it, in staff spaces (default 2)
 		footer: "none", // not Verovio's credit line
+		svgAdditionalAttribute: ["measure@n"], // its number, as data-n
 		...options,
 	});
 	if (!toolkit.loadData(musicXml)) {

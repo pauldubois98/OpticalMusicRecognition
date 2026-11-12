@@ -22,6 +22,7 @@ import {
 	watch,
 } from "vue";
 import { download } from "../download.js";
+import { TIMES } from "../pipeline/copisteria/vocab.js";
 import {
 	addedDynamicRef,
 	addedHairpinRef,
@@ -33,6 +34,7 @@ import { musicXmlToMidi } from "../render/verovio.js";
 import {
 	buildScore,
 	GROUP_SYMBOLS,
+	measureMeters,
 	partGroups,
 	scoreKey,
 	staffClefs,
@@ -348,6 +350,7 @@ function pickGroup(g) {
 	selectedPart.value = null;
 	selectedStaff.value = null;
 	selectedClefKey.value = null;
+	selectedMeter.value = null;
 	selectedGroupKey.value = g ? groupKey(g) : null;
 }
 
@@ -471,6 +474,59 @@ const clefsNow = computed(() => staffClefs(result.value.musicXml));
 const keyNow = computed(() => scoreKey(result.value.musicXml));
 const isMoreClef = (name) => MORE_CLEFS.some(([n]) => n === name);
 
+// the meter: a time signature picked sets it from its measure up to the
+// next one shown (or the end of the score), see pipeline/edit.js
+const TIME_CHOICES = ["2/4", "3/4", "4/4", "2/2", "3/8", "6/8", "9/8", "12/8"];
+const MORE_TIMES = TIMES.filter(
+	(t) => t?.includes("/") && !TIME_CHOICES.includes(t),
+);
+const selectedMeter = ref(null); // a time signature's measure (0: the first)
+const metersNow = computed(() => measureMeters(result.value.musicXml));
+
+/** A measure of the score (counted from 0) as [page, measure on the page]. */
+function pageMeasure(n) {
+	const counts = result.value.pageResults?.map((r) => r.measures ?? 0) ?? [];
+	let m = n;
+	for (let page = 0; page < counts.length; page++) {
+		if (m < counts[page]) {
+			return [page, m];
+		}
+		m -= counts[page];
+	}
+	return null;
+}
+
+/** The measure (counted from 0) a time signature drawn as `el` is in. */
+const measureOf = (el) => Number(el.closest(".measure")?.dataset.n) - 1;
+
+/** The next measure after `n` with a time signature shown, or null. */
+function nextMeter(n) {
+	let next = null;
+	for (const el of scoreEl.value?.querySelectorAll(".meterSig") ?? []) {
+		const m = measureOf(el);
+		if (m > n && (next === null || m < next)) {
+			next = m;
+		}
+	}
+	return next;
+}
+
+function setMeter(value) {
+	const n = selectedMeter.value;
+	const from = n === null ? null : pageMeasure(n);
+	if (!value || !from) {
+		return;
+	}
+	const end = nextMeter(n);
+	apply({
+		type: "time",
+		page: null,
+		from,
+		to: end === null ? null : pageMeasure(end),
+		value,
+	});
+}
+
 /** Pick nothing but `what` (a staff, a clef within a bar, …). */
 function pickOnly(what) {
 	selectedKey.value = null;
@@ -478,6 +534,7 @@ function pickOnly(what) {
 	selectedGroupKey.value = null;
 	selectedStaff.value = null;
 	selectedClefKey.value = null;
+	selectedMeter.value = null;
 	what?.();
 }
 
@@ -513,20 +570,22 @@ function midClefOf(el) {
 }
 
 /**
- * The clef or key signature at a click: its glyphs are small and only their
+ * The clef, key or time signature at a click: its glyphs are small and only their
  * ink catches a pointer (a third of their box), so the box counts, and a
  * little around it (a finger more). The nearest, and how far (px, 0 in its
  * box); null when none is near, or a note is nearer.
  */
 function clefAt({ target, clientX: x, clientY: y, pointerType }) {
-	const direct = target?.closest?.(".clef, .keySig");
+	const direct = target?.closest?.(".clef, .keySig, .meterSig");
 	if (direct) {
 		return { el: direct, distance: 0 };
 	}
 	const margin = pointerType === "touch" ? 12 : 4; // px
 	let best = null;
 	let bestDistance = margin;
-	for (const el of scoreEl.value?.querySelectorAll(".clef, .keySig") ?? []) {
+	for (const el of scoreEl.value?.querySelectorAll(
+		".clef, .keySig, .meterSig",
+	) ?? []) {
 		const r = el.getBoundingClientRect();
 		const d = Math.hypot(
 			Math.max(r.left - x, 0, x - r.right),
@@ -548,11 +607,24 @@ function clefAt({ target, clientX: x, clientY: y, pointerType }) {
 	return { el: best, distance: bestDistance };
 }
 
-/** A clef or key signature clicked on the score: its staff, or the clef. */
+/**
+ * A clef, key or time signature clicked on the score: its staff, the clef,
+ * or the time signature's measure.
+ */
 function pickClefAt(event) {
 	const el = clefAt(event)?.el;
 	if (!el) {
 		return false;
+	}
+	if (el.classList.contains("meterSig")) {
+		const n = measureOf(el);
+		if (!(n >= 0) || !pageMeasure(n)) {
+			return false;
+		}
+		pickOnly(() => {
+			selectedMeter.value = n;
+		});
+		return true;
 	}
 	if (el.closest(".layer")) {
 		const c = midClefOf(el);
@@ -600,6 +672,7 @@ function deleteMidClef() {
 	const c = selectedClef.value;
 	if (c) {
 		selectedClefKey.value = null;
+		selectedMeter.value = null;
 		apply({
 			type: "set",
 			page: c.page,
@@ -615,6 +688,7 @@ function pickPart(k) {
 	selectedGroupKey.value = null;
 	selectedStaff.value = null;
 	selectedClefKey.value = null;
+	selectedMeter.value = null;
 	selectedPart.value = k;
 	const name = omr.partNames[k];
 	partDraft.value = typeof name === "string" ? name : `Part ${k + 1}`;
@@ -640,6 +714,7 @@ watch(selectedKey, (key) => {
 		selectedGroupKey.value = null;
 		selectedStaff.value = null;
 		selectedClefKey.value = null;
+		selectedMeter.value = null;
 	}
 });
 
@@ -1088,6 +1163,7 @@ function onScoreClick(event) {
 	}
 	selectedStaff.value = null;
 	selectedClefKey.value = null;
+	selectedMeter.value = null;
 	const s = nearest(event);
 	if (picking.value) {
 		if (s) {
@@ -1130,6 +1206,13 @@ async function markScore() {
 			);
 		}
 	}
+	if (selectedMeter.value !== null) {
+		for (const el of scoreEl.value.querySelectorAll(".meterSig")) {
+			if (measureOf(el) === selectedMeter.value) {
+				els.push(el);
+			}
+		}
+	}
 	if (selectedGroup.value) {
 		const key = groupKey(selectedGroup.value);
 		for (const sym of scoreEl.value.querySelectorAll(".grpSym")) {
@@ -1159,6 +1242,7 @@ watch(
 		selectedPart,
 		selectedGroup,
 		selectedStaff,
+		selectedMeter,
 		result,
 	],
 	markScore,
@@ -1218,6 +1302,7 @@ function onKey(event) {
 			selectedGroupKey.value = null;
 			selectedStaff.value = null;
 			selectedClefKey.value = null;
+			selectedMeter.value = null;
 		}
 		return;
 	}
@@ -1469,7 +1554,7 @@ async function downloadMidi() {
 				<span v-else-if="pickHint" class="error">{{ pickHint }}</span>
 				<span v-else class="hint">
 					A first draft: click a note, tie, slur, hairpin or dynamic to correct
-					it, or a clef, key, bracket or part's name.
+					it, or a clef, key, time signature, bracket or part's name.
 				</span>
 			</p>
 			<div v-if="result.svg.length > 0" class="group zoom" aria-label="Zoom">
@@ -1507,7 +1592,7 @@ async function downloadMidi() {
 				</div>
 			</div>
 			<!-- beside the score; on a phone, a sheet at the bottom while a symbol is selected -->
-			<div class="side" :class="{ open: !!selected || selectedPart !== null || !!selectedGroup || selectedStaff !== null || !!selectedClef }">
+			<div class="side" :class="{ open: !!selected || selectedPart !== null || !!selectedGroup || selectedStaff !== null || !!selectedClef || selectedMeter !== null }">
 				<div v-if="selectedPart !== null && !selected" class="note-editor">
 					<div class="note-title">
 						<strong>Part {{ selectedPart + 1 }}{{ partStaves.length > 1 ? ` of ${partStaves.length}` : "" }}</strong>
@@ -1619,6 +1704,37 @@ async function downloadMidi() {
 					<div class="actions">
 						<button class="danger" title="Delete this clef change" @click="deleteMidClef">Delete</button>
 					</div>
+				</div>
+				<div v-if="selectedMeter !== null && !selected" class="note-editor">
+					<div class="note-title">
+						<strong>Time signature · bar {{ selectedMeter + 1 }}</strong>
+						<button class="link" title="Deselect (Esc)" @click="selectedMeter = null">✕</button>
+					</div>
+					<div class="rows">
+						<span class="label">Time</span>
+						<div class="group" aria-label="Time signature">
+							<button
+								v-for="t in TIME_CHOICES"
+								:key="t"
+								:aria-pressed="metersNow[selectedMeter] === t"
+								@click="setMeter(t)"
+							>
+								{{ t }}
+							</button>
+							<select
+								:value="MORE_TIMES.includes(metersNow[selectedMeter]) ? metersNow[selectedMeter] : ''"
+								aria-label="Other time signatures"
+								@change="setMeter($event.target.value)"
+							>
+								<option value="" disabled>More…</option>
+								<option v-for="t in MORE_TIMES" :key="t" :value="t">{{ t }}</option>
+							</select>
+						</div>
+					</div>
+					<p class="hint">
+						From bar {{ selectedMeter + 1 }} to the next time signature, or the end of the
+						score. The bars are read again with this length.
+					</p>
 				</div>
 				<div v-if="selectedGroup && !selected" class="note-editor">
 					<div class="note-title">
@@ -1844,7 +1960,7 @@ async function downloadMidi() {
 				</div>
 				<!-- not for a part, bracket or staff: no place on the page to show -->
 				<PageHighlight
-					v-if="highlightPage?.url && selectedPart === null && !selectedGroup && selectedStaff === null"
+					v-if="highlightPage?.url && selectedPart === null && !selectedGroup && selectedStaff === null && selectedMeter === null"
 					:key="shownPage"
 					:src="highlightPage.url"
 					:width="highlightPage.width"

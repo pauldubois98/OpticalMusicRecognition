@@ -84,6 +84,24 @@ export function staffClefs(xml) {
 export const scoreKey = (xml) =>
 	Number(xml.match(/<fifths>\s*(-?\d+)/)?.[1] ?? 0);
 
+/** The meter of each measure ("3/4", …; null before any), of the first part. */
+export function measureMeters(xml) {
+	const part = xml.match(/<part id="[^"]*">[\s\S]*?<\/part>/)?.[0] ?? "";
+	let meter = null;
+	return part
+		.split(/<measure\b/)
+		.slice(1)
+		.map((m) => {
+			const t = m.match(
+				/<time\b[^>]*>\s*<beats>(\d+)<\/beats>\s*<beat-type>(\d+)<\/beat-type>/,
+			);
+			if (t) {
+				meter = `${t[1]}/${t[2]}`;
+			}
+			return meter;
+		});
+}
+
 // the brackets: a group of parts (first … last, counted from 0) joined by a
 // symbol at the left of each system, its bar lines through all its staves or
 // not. A part of several staves on its own (a piano) is a group of one part

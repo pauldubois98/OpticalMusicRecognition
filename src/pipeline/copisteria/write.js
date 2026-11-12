@@ -2036,7 +2036,8 @@ export function writeTree(
 		return [built, allDurs, fit];
 	};
 
-	const [built, allDurs] = build(pageMeter(rd, build));
+	// this app: a meter set by hand from the page's start (pipeline/edit.js)
+	const [built, allDurs] = build(rd.userMeter ?? pageMeter(rd, build));
 
 	// ties: a tied note's partner is the next note of its voice on the same line
 	const pairs = [];

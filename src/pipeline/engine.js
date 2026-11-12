@@ -442,7 +442,12 @@ export async function editRecognition(state, ops, { onProgress } = {}) {
 		}
 		state.adds = adds;
 	}
-	const { reading, edited } = applyEdits(state.reading, ops, state.staves);
+	const { reading, edited } = applyEdits(
+		state.reading,
+		ops,
+		state.staves,
+		state.index,
+	);
 	const result = resultOf(reading, edited, state.index);
 	// added symbols the reader could not place (no staff or bar) are reported
 	const placed = new Set(result.symbols.map((s) => s.key));

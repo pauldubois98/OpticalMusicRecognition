@@ -126,3 +126,19 @@ describe("the clefs and key", async () => {
 		expect(scoreKey(xml)).toBe(-3);
 	});
 });
+
+describe("the meters", () => {
+	it("reads each measure's meter, from the first part", async () => {
+		const { measureMeters } = await import("../src/score.js");
+		const time = (b, t, attrs = "") =>
+			`<attributes><time${attrs}><beats>${b}</beats><beat-type>${t}</beat-type></time></attributes>`;
+		const xml =
+			'<score-partwise><part id="P1">' +
+			`<measure number="1">${time(3, 8)}</measure>` +
+			'<measure number="2"></measure>' +
+			`<measure number="3">${time(2, 4, ' print-object="no"')}</measure>` +
+			'</part><part id="P2"><measure number="1">' +
+			`${time(4, 4)}</measure></part></score-partwise>`;
+		expect(measureMeters(xml)).toEqual(["3/8", "3/8", "2/4"]);
+	});
+});

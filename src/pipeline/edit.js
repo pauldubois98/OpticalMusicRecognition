@@ -21,6 +21,11 @@
 //       "mf", "sfz", … or null (none); at, the box of the note it is placed
 //       at. `ref`: one read on the page ("d:<its box>"), or one added
 //       ("da:<note box>#<n>")
+//   { type: "clef" | "key", page: null, … }  see setBars
+//   { type: "time", page: null, from, to, value } a meter (vocab.js TIMES,
+//       "3/4", "6/8", …) from a measure on, up to another (excluded), or to
+//       the end (to: null); measures as [page, measure on that page] (see
+//       measureColumns)
 // Symbols are named by their box, which stays the same when the page is read
 // again with added symbols (symbol indices do not). Hand edits always win
 // over the reader's own choices.
@@ -141,17 +146,65 @@ function setBars(reading, tok, op) {
 }
 
 /**
+ * The measures of a page as the writer makes them (write.js writeTree), in
+ * order: [system, column] (one per column of bars of each system).
+ */
+export function measureColumns(layout) {
+	const columns = [];
+	layout.systems.forEach((sy, si) => {
+		const cols = sy.columns.filter((c) => c.length).map((c) => Math.max(...c));
+		const ncol = 1 + (cols.length ? Math.max(...cols) : -1);
+		for (let c = 0; c < ncol; c++) {
+			columns.push([si, c]);
+		}
+	});
+	return columns;
+}
+
+const before = ([p, m], [q, n]) => p < q || (p === q && m < n);
+
+/**
+ * A meter set by hand (a "time" op) on the bars of page `page` it covers;
+ * the meter it starts the page with, if it does (else null).
+ */
+function setMeter(reading, tok, op, page) {
+	const L = reading.layout;
+	let opening = null;
+	measureColumns(L).forEach(([si, c], m) => {
+		const at = [page, m];
+		if (before(at, op.from) || (op.to && !before(at, op.to))) {
+			return;
+		}
+		if (m === 0) {
+			opening = op.value;
+		}
+		const sy = L.systems[si];
+		sy.staves.forEach((k, i) => {
+			sy.columns[i].forEach((cc, j) => {
+				const r = cc === c && tok.get(L.staves[k].bars[j]);
+				if (r && "time" in r) {
+					r.time = { ...r.time, v: op.value, p: 1 };
+				}
+			});
+		});
+	});
+	return opening;
+}
+
+/**
  * The reading with the edits applied (its tokens copied, the original is
  * kept), and the names of the symbols they touched. `staves`: the page as
- * first read (where added symbols were placed).
+ * first read (where added symbols were placed); `page`: its index in the
+ * score.
  */
-export function applyEdits(reading, ops, staves) {
+export function applyEdits(reading, ops, staves, page = 0) {
 	const tok = structuredClone(reading.tok);
 	const siByKey = new Map(reading.layout.syms.map((s) => [boxKey(s.box), s.i]));
 	const edited = new Set();
 	const spans = new Map(); // ref → the span set by hand (see write.js)
 	const hairpins = new Map(); // ref → the hairpin set by hand
 	const dynamics = new Map(); // ref → the dynamic set by hand
+	let userMeter = null; // the page's opening meter set by hand
 	const tokenOf = (key) => {
 		const si = siByKey.get(key);
 		return si === undefined ? null : (tok.get(si) ?? null);
@@ -187,6 +240,8 @@ export function applyEdits(reading, ops, staves) {
 			edited.add(op.ref);
 		} else if (op.type === "clef" || op.type === "key") {
 			setBars(reading, tok, op);
+		} else if (op.type === "time") {
+			userMeter = setMeter(reading, tok, op, page) ?? userMeter;
 		}
 	}
 	const userSpans = { claimed: new Set(), noTie: new Set(), list: [] };
@@ -233,7 +288,14 @@ export function applyEdits(reading, ops, staves) {
 		}
 	}
 	return {
-		reading: { ...reading, tok, userSpans, userHairpins, userDynamics },
+		reading: {
+			...reading,
+			tok,
+			userSpans,
+			userHairpins,
+			userDynamics,
+			...(userMeter && { userMeter }),
+		},
 		edited,
 	};
 }
@@ -508,6 +570,7 @@ export function resultOf(reading, edited = new Set(), page = 0) {
 		tree,
 		symbols,
 		clefs,
+		measures: measureColumns(L).length,
 		staves: stavesOf(reading),
 		summary: {
 			staves: L.staves.length,
