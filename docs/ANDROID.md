@@ -80,18 +80,20 @@ Back the keystore up. With Play App Signing (the default), Google holds the real
 ## 5. Google Play Console
 
 1. Create a developer account at <https://play.google.com/console>. It costs US$25 once and needs identity verification.
-2. Create the app with the name "MusicOCR", default language, App, and Free.
-3. **App content:**
-   - **Privacy policy URL:** required because the app asks for the camera. A short page is enough: images and scores are processed on the device and never sent anywhere, and the only network use is the optional model download from Hugging Face.
+2. Set up a **payments profile** (Setup → Payments profile: bank account and tax details). Selling needs it. With a personal account that sells, Google shows your address on the store page.
+3. Create the app with the name "MusicOCR", default language, App, and **Paid**. A free app can never be made paid later, so choose this from the start.
+4. **Price** (Monetize → Products → App pricing): US$4.99 or US$5, a one-time purchase, with no code in the app. Google converts it to local prices, which you can adjust, and takes 15% of your first US$1M a year. In many countries, including the EU, Google also collects the VAT or sales tax from the price.
+5. **App content:**
+   - **Privacy policy URL:** required because the app asks for the camera. Use <https://pauldubois98.github.io/OpticalMusicRecognition/privacy.html>, which is `public/privacy.html`, published with the website.
    - **Data safety:** no data collected, no data shared.
    - **Content rating** questionnaire (the app will be rated Everyone), **target audience**, and **ads** (none).
-4. **Store listing:**
+6. **Store listing:**
    - a short and a full description;
    - a 512×512 icon;
    - a 1024×500 feature graphic;
    - at least 2 phone screenshots.
-5. **Testing:** personal developer accounts created after November 2023 must run a **closed test with at least 12 testers for 14 days in a row** before they can apply for production. Upload the AAB to a closed testing track, invite the testers by email or Google Group, and wait out the 14 days.
-6. Apply for production access, then release the AAB to production.
+7. **Testing:** personal developer accounts created after November 2023 must run a **closed test with at least 12 testers for 14 days in a row** before they can apply for production. Upload the AAB to a closed testing track, invite the testers by email or Google Group, and wait out the 14 days. Testers must also buy a paid app; to spare them that, give them **promo codes** (Monetize → Promo codes).
+8. Apply for production access, then release the AAB to production.
 
 ## Later: iOS
 
