@@ -1,0 +1,35 @@
+Turn a photo of printed sheet music into a score you can edit, play and share. MusicOCR reads the notes on your phone, without sending your pages anywhere.
+
+<b>How it works</b>
+• Take a photo of a page with your camera, or import images from your gallery. Add several pages for a longer piece.
+• MusicOCR finds the page in the photo, straightens it, evens out shadows and cleans it up. You can drag the corners and adjust the lighting and cleaning yourself.
+• Tap Recognize: notes, rests, chords, clefs, key and time signatures, ties, slurs, tuplets, articulations, dynamics and hairpins are read and laid out as a real score.
+
+<b>Correct anything</b>
+Recognition is a first draft, so every symbol can be fixed in a tap. Select a note and the app shows it on the original page, so you can compare at a glance.
+• Change pitch, accidentals, duration, dots and tuplets; turn a note into a rest or delete it.
+• Add or remove articulations, dynamics, slurs, ties and crescendo/diminuendo hairpins.
+• Change clefs, key signatures and time signatures, name the parts and edit the brackets.
+• Add notes that were missed.
+• Undo and redo every change.
+
+<b>Export and share</b>
+• MusicXML: open your score in MuseScore, Sibelius, Finale, Dorico and most notation software.
+• MIDI: listen to it, or load it in a sequencer or a practice app.
+• PDF and PNG: print it or send it.
+Exports open Android's share menu: save them to your files or Drive, or send them in any app.
+
+<b>Your scores, kept on your phone</b>
+Each score is saved as soon as it is recognized, with its photos and all your corrections, so you can come back to it later without recognizing it again.
+
+<b>Private and offline</b>
+• Recognition runs entirely on your phone and works in airplane mode.
+• No account, no ads, no tracking, no subscription. You pay once.
+• An optional high-accuracy recognizer (a 115 MB download) improves the results on hard pages. You can remove it at any time to free the space.
+
+<b>Good to know</b>
+• MusicOCR reads printed music, not handwriting.
+• The best results come from a flat page, in even light, with the whole page in the frame. Clean scans work too.
+• Pages with very dense or unusual notation may need more corrections.
+
+MusicOCR is open source (MIT licence). Recognition is based on copisteria and the copista models by KobiMusic; scores are drawn with Verovio.

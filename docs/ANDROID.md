@@ -87,11 +87,12 @@ Back the keystore up. With Play App Signing (the default), Google holds the real
    - **Privacy policy URL:** required because the app asks for the camera. Use <https://pauldubois98.github.io/OpticalMusicRecognition/privacy.html>, which is `public/privacy.html`, published with the website.
    - **Data safety:** no data collected, no data shared.
    - **Content rating** questionnaire (the app will be rated Everyone), **target audience**, and **ads** (none).
-6. **Store listing:**
-   - a short and a full description;
-   - a 512×512 icon;
-   - a 1024×500 feature graphic;
-   - at least 2 phone screenshots.
+6. **Store listing:** everything is in `fastlane/metadata/android/en-US/`, the layout fastlane `supply` uses:
+   - `title.txt`, `short_description.txt` and `full_description.txt`;
+   - `images/icon.png` (512×512), `images/featureGraphic.png` (1024×500) and `images/phoneScreenshots/1–5.png` (1080×1920);
+   - `changelogs/<versionCode>.txt`, the release notes.
+
+   Category: Music & Audio. Website: the GitHub Pages site.
 7. **Testing:** personal developer accounts created after November 2023 must run a **closed test with at least 12 testers for 14 days in a row** before they can apply for production. Upload the AAB to a closed testing track, invite the testers by email or Google Group, and wait out the 14 days. Testers must also buy a paid app; to spare them that, give them **promo codes** (Monetize → Promo codes).
 8. Apply for production access, then release the AAB to production.
 

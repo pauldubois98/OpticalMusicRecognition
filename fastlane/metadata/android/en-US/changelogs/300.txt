@@ -1,0 +1,1 @@
+First release: photograph or import printed sheet music, correct the recognized score, and export it to MusicXML, MIDI, PDF or PNG.
