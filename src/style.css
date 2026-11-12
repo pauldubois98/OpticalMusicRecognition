@@ -304,7 +304,9 @@ input[type="file"] {
 	cursor: text;
 }
 
-.score-view g.grpSym {
+.score-view g.grpSym,
+.score-view g.clef,
+.score-view g.keySig {
 	cursor: pointer;
 }
 

@@ -120,7 +120,8 @@ async function run(message, onProgress) {
 				reviveState(state);
 				const result = await editRecognition(
 					state,
-					message.ops.filter((op) => op.page === k),
+					// the page's edits, and those of the whole score (no page)
+					message.ops.filter((op) => op.page === k || op.page === null),
 				);
 				const page = withScore(k, state, result);
 				results.push(page);

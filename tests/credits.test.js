@@ -111,3 +111,18 @@ describe("the brackets", async () => {
 		expect(withPartGroups(out, groups)).toBe(out);
 	});
 });
+
+describe("the clefs and key", async () => {
+	const { scoreKey, staffClefs } = await import("../src/score.js");
+	it("reads each staff's clef and the key", () => {
+		const xml =
+			'<score-partwise><part id="P1"><measure number="1"><attributes><divisions>1</divisions>' +
+			"<key><fifths>-3</fifths></key><staves>2</staves>" +
+			'<clef number="1"><sign>G</sign><line>2</line><clef-octave-change>-1</clef-octave-change></clef>' +
+			'<clef number="2"><sign>F</sign><line>4</line></clef></attributes></measure></part>' +
+			'<part id="P2"><measure number="1"><attributes><clef><sign>C</sign><line>3</line></clef>' +
+			"</attributes></measure></part></score-partwise>";
+		expect(staffClefs(xml)).toEqual(["G2_8b", "F4", "C3"]);
+		expect(scoreKey(xml)).toBe(-3);
+	});
+});

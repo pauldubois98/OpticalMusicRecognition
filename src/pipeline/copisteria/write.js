@@ -55,7 +55,7 @@ const MID_LINE = {
 	perc: 34,
 	other: 34,
 };
-const CLEF_XML = {
+export const CLEF_XML = {
 	G2: ["G", 2, 0],
 	G1: ["G", 1, 0],
 	F4: ["F", 4, 0],

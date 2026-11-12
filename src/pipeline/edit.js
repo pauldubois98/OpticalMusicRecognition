@@ -115,6 +115,32 @@ function setField(r, field, value) {
 }
 
 /**
+ * A clef or key set for the whole score (an op with no page: every page
+ * gets it), on every bar as read, so that it holds from the start to the
+ * end: `{ type: "clef", slot, value }` for the staves at place `slot` in
+ * their systems (0: the top one), a clef name (see vocab.js CLEFS);
+ * `{ type: "key", value }` for all staves, in fifths (-7 … 7). Clefs
+ * written within a bar (symbols) still apply after this one.
+ */
+function setBars(reading, tok, op) {
+	const L = reading.layout;
+	L.staves.forEach((st, k) => {
+		const slot = L.staves.filter(
+			(o, j) => j < k && o.system === st.system,
+		).length;
+		if (op.type === "clef" && slot !== op.slot) {
+			return;
+		}
+		for (const b of st.bars) {
+			const r = tok.get(b);
+			if (r && op.type in r) {
+				r[op.type] = { ...r[op.type], v: op.value, p: 1 };
+			}
+		}
+	});
+}
+
+/**
  * The reading with the edits applied (its tokens copied, the original is
  * kept), and the names of the symbols they touched. `staves`: the page as
  * first read (where added symbols were placed).
@@ -159,6 +185,8 @@ export function applyEdits(reading, ops, staves) {
 		} else if (op.type === "dynamic") {
 			dynamics.set(op.ref, op);
 			edited.add(op.ref);
+		} else if (op.type === "clef" || op.type === "key") {
+			setBars(reading, tok, op);
 		}
 	}
 	const userSpans = { claimed: new Set(), noTie: new Set(), list: [] };
@@ -460,10 +488,26 @@ export function resultOf(reading, edited = new Set(), page = 0) {
 			edited: true,
 		});
 	}
+	// the clefs written within a bar (a clef change): picked one by one
+	const clefs = [];
+	for (const s of L.syms) {
+		const r = reading.tok.get(s.i);
+		if (r && r.real.p >= REAL && family(r.cls.v) === "clef" && s.staff >= 0) {
+			clefs.push({
+				key: `${page}:${boxKey(s.box)}`,
+				page,
+				box: s.box.map(Number),
+				staff: s.staff,
+				slot: slotOf[s.staff],
+				cls: r.cls.v,
+			});
+		}
+	}
 	return {
 		musicXml,
 		tree,
 		symbols,
+		clefs,
 		staves: stavesOf(reading),
 		summary: {
 			staves: L.staves.length,

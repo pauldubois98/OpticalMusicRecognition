@@ -34,6 +34,8 @@ import {
 	buildScore,
 	GROUP_SYMBOLS,
 	partGroups,
+	scoreKey,
+	staffClefs,
 	partStaves as stavesOfParts,
 } from "../score.js";
 import { useOmrState } from "../useOmr.js";
@@ -122,6 +124,13 @@ let editRun = 0;
 // changed its page (the worker applies them all, in order)
 let latest = [...props.initial.pageResults];
 
+// an edit is on a page (op.page), or on the whole score (op.page null: a
+// clef or key, see pipeline/edit.js)
+const opsOf = (page) =>
+	ops.value.filter((op) => op.page === page || op.page === null);
+const pagesOf = (op) =>
+	op.page === null ? latest.map((_, i) => i) : [op.page];
+
 /**
  * Replay all the edits of the pages `pages`; then select `select` (a
  * symbol's key), if given.
@@ -133,17 +142,13 @@ async function replay(pages, select = null) {
 	try {
 		let musicXml = null;
 		for (const page of pages) {
-			const next = await editRecognition(
-				page,
-				ops.value.filter((op) => op.page === page),
-				{
-					onProgress: (p) => {
-						if (run === editRun) {
-							editProgress.value = p;
-						}
-					},
+			const next = await editRecognition(page, opsOf(page), {
+				onProgress: (p) => {
+					if (run === editRun) {
+						editProgress.value = p;
+					}
 				},
-			);
+			});
 			latest = latest.map((r, i) => (i === page ? next : r));
 			({ musicXml } = next);
 		}
@@ -317,14 +322,20 @@ function bracketAt({ target, clientX: x, clientY: y, pointerType }) {
 	if (hit) {
 		return hit;
 	}
+	// a name hit wins over a bracket near it, and so does a nearer clef or key
+	if (target?.closest?.(".label")) {
+		return null;
+	}
+	const clef = clefAt({ target, clientX: x, clientY: y, pointerType });
 	const margin = pointerType === "touch" ? 16 : 8;
 	for (const el of scoreEl.value?.querySelectorAll(".grpSym") ?? []) {
 		const r = el.getBoundingClientRect();
+		const dx = Math.max(r.left - x, 0, x - r.right);
 		if (
-			x >= r.left - margin &&
-			x <= r.right + margin &&
+			dx <= margin &&
 			y >= r.top &&
-			y <= r.bottom
+			y <= r.bottom &&
+			!(clef && clef.distance <= dx)
 		) {
 			return el;
 		}
@@ -335,6 +346,8 @@ function bracketAt({ target, clientX: x, clientY: y, pointerType }) {
 function pickGroup(g) {
 	selectedKey.value = null;
 	selectedPart.value = null;
+	selectedStaff.value = null;
+	selectedClefKey.value = null;
 	selectedGroupKey.value = g ? groupKey(g) : null;
 }
 
@@ -411,9 +424,197 @@ function addGroup(k) {
 const partGroupsOf = (k) =>
 	groups.value.filter((g) => g.first <= k && k <= g.last);
 
+// ------------------------------------------------------- clefs and key
+//
+// A clef or key signature at the start of a system picks its staff: its
+// clef is set for the whole score (that staff, see pipeline/edit.js), and
+// the key too (all staves). A clef within a bar (a clef change) is picked
+// on its own: changed or deleted.
+
+const CLEF_CHOICES = [
+	["G2", "Treble"],
+	["F4", "Bass"],
+	["C3", "Alto"],
+	["C4", "Tenor"],
+	["G2_8b", "Treble 8vb"],
+];
+const MORE_CLEFS = [
+	["C1", "Soprano (C1)"],
+	["C2", "Mezzo-soprano (C2)"],
+	["C5", "Baritone (C5)"],
+	["F3", "Baritone (F3)"],
+	["F5", "Sub-bass (F5)"],
+	["G1", "French violin (G1)"],
+	["G2_8a", "Treble 8va"],
+	["G2_15b", "Treble 15mb"],
+	["G2_15a", "Treble 15ma"],
+	["F4_8b", "Bass 8vb"],
+	["F4_8a", "Bass 8va"],
+	["F4_15b", "Bass 15mb"],
+	["F4_15a", "Bass 15ma"],
+	["perc", "Percussion"],
+];
+const CLEF_NAMES = Object.fromEntries([...CLEF_CHOICES, ...MORE_CLEFS]);
+const KEYS = Array.from({ length: 15 }, (_, i) => i - 7);
+const MAJOR = "C♭ G♭ D♭ A♭ E♭ B♭ F C G D A E B F♯ C♯".split(" ");
+const MINOR = "A♭ E♭ B♭ F C G D A E B F♯ C♯ G♯ D♯ A♯".split(" ");
+const keyLabel = (f) => (f === 0 ? "♮" : f > 0 ? `${f}♯` : `${-f}♭`);
+const keyTitle = (f) => `${MAJOR[f + 7]} major / ${MINOR[f + 7]} minor`;
+
+const selectedStaff = ref(null); // a staff's place in the systems (0: top)
+const selectedClefKey = ref(null); // a clef within a bar
+const selectedClef = computed(
+	() =>
+		result.value.clefs?.find((c) => c.key === selectedClefKey.value) ?? null,
+);
+const clefsNow = computed(() => staffClefs(result.value.musicXml));
+const keyNow = computed(() => scoreKey(result.value.musicXml));
+const isMoreClef = (name) => MORE_CLEFS.some(([n]) => n === name);
+
+/** Pick nothing but `what` (a staff, a clef within a bar, …). */
+function pickOnly(what) {
+	selectedKey.value = null;
+	selectedPart.value = null;
+	selectedGroupKey.value = null;
+	selectedStaff.value = null;
+	selectedClefKey.value = null;
+	what?.();
+}
+
+/** The clef within a bar drawn as `el`: the one after the note before it. */
+function midClefOf(el) {
+	let s = null;
+	for (
+		let e = el.previousElementSibling;
+		e && !s;
+		e = e.previousElementSibling
+	) {
+		s =
+			[e, ...e.querySelectorAll("[id]")]
+				.reverse()
+				.map((x) => byId.value.get(x.id))
+				.find(Boolean) ?? null;
+	}
+	if (!s) {
+		return null;
+	}
+	let best = null;
+	for (const c of result.value.clefs ?? []) {
+		if (
+			c.page === s.page &&
+			c.staff === s.staff &&
+			c.box[0] > s.box[0] &&
+			(!best || c.box[0] < best.box[0])
+		) {
+			best = c;
+		}
+	}
+	return best;
+}
+
+/**
+ * The clef or key signature at a click: its glyphs are small and only their
+ * ink catches a pointer (a third of their box), so the box counts, and a
+ * little around it (a finger more). The nearest, and how far (px, 0 in its
+ * box); null when none is near, or a note is nearer.
+ */
+function clefAt({ target, clientX: x, clientY: y, pointerType }) {
+	const direct = target?.closest?.(".clef, .keySig");
+	if (direct) {
+		return { el: direct, distance: 0 };
+	}
+	const margin = pointerType === "touch" ? 12 : 4; // px
+	let best = null;
+	let bestDistance = margin;
+	for (const el of scoreEl.value?.querySelectorAll(".clef, .keySig") ?? []) {
+		const r = el.getBoundingClientRect();
+		const d = Math.hypot(
+			Math.max(r.left - x, 0, x - r.right),
+			Math.max(r.top - y, 0, y - r.bottom),
+		);
+		if (d <= bestDistance) {
+			best = el;
+			bestDistance = d;
+		}
+	}
+	if (!best) {
+		return null;
+	}
+	// a note nearer still is the one meant
+	const [, noteDistance] = nearestNote({ clientX: x, clientY: y, pointerType });
+	if (bestDistance > 0 && noteDistance < bestDistance) {
+		return null;
+	}
+	return { el: best, distance: bestDistance };
+}
+
+/** A clef or key signature clicked on the score: its staff, or the clef. */
+function pickClefAt(event) {
+	const el = clefAt(event)?.el;
+	if (!el) {
+		return false;
+	}
+	if (el.closest(".layer")) {
+		const c = midClefOf(el);
+		if (c) {
+			pickOnly(() => {
+				selectedClefKey.value = c.key;
+			});
+		}
+		return !!c;
+	}
+	const staff = el.closest(".staff");
+	const slot = staff?.parentElement
+		? [...staff.parentElement.querySelectorAll(":scope > .staff")].indexOf(
+				staff,
+			)
+		: -1;
+	if (slot < 0) {
+		return false;
+	}
+	pickOnly(() => {
+		selectedStaff.value = slot;
+	});
+	return true;
+}
+
+const setStaffClef = (name) =>
+	name &&
+	apply({ type: "clef", page: null, slot: selectedStaff.value, value: name });
+const setKey = (fifths) => apply({ type: "key", page: null, value: fifths });
+
+function setMidClef(name) {
+	const c = selectedClef.value;
+	if (c && name) {
+		apply({
+			type: "set",
+			page: c.page,
+			box: c.box,
+			field: "cls",
+			value: `clef_${name}`,
+		});
+	}
+}
+
+function deleteMidClef() {
+	const c = selectedClef.value;
+	if (c) {
+		selectedClefKey.value = null;
+		apply({
+			type: "set",
+			page: c.page,
+			box: c.box,
+			field: "deleted",
+			value: true,
+		});
+	}
+}
+
 function pickPart(k) {
 	selectedKey.value = null;
 	selectedGroupKey.value = null;
+	selectedStaff.value = null;
+	selectedClefKey.value = null;
 	selectedPart.value = k;
 	const name = omr.partNames[k];
 	partDraft.value = typeof name === "string" ? name : `Part ${k + 1}`;
@@ -437,13 +638,15 @@ watch(selectedKey, (key) => {
 	if (key !== null) {
 		selectedPart.value = null;
 		selectedGroupKey.value = null;
+		selectedStaff.value = null;
+		selectedClefKey.value = null;
 	}
 });
 
 function apply(op, select = null) {
 	ops.value = [...ops.value, op];
 	undone.value = [];
-	replay([op.page], select);
+	replay(pagesOf(op), select);
 }
 
 function set(field, v) {
@@ -458,7 +661,7 @@ function undo() {
 	if (op) {
 		undone.value = [...undone.value, op];
 		ops.value = ops.value.slice(0, -1);
-		replay([op.page]);
+		replay(pagesOf(op));
 	}
 }
 
@@ -467,13 +670,13 @@ function redo() {
 	if (op) {
 		ops.value = [...ops.value, op];
 		undone.value = undone.value.slice(0, -1);
-		replay([op.page]);
+		replay(pagesOf(op));
 	}
 }
 
 function resetEdits() {
 	if (ops.value.length) {
-		const pages = [...new Set(ops.value.map((op) => op.page))];
+		const pages = [...new Set(ops.value.flatMap(pagesOf))];
 		undone.value = [...undone.value, ...[...ops.value].reverse()];
 		ops.value = [];
 		replay(pages);
@@ -880,6 +1083,11 @@ function onScoreClick(event) {
 		}
 	}
 	selectedPart.value = null;
+	if (!picking.value && pickClefAt(event)) {
+		return;
+	}
+	selectedStaff.value = null;
+	selectedClefKey.value = null;
 	const s = nearest(event);
 	if (picking.value) {
 		if (s) {
@@ -913,6 +1121,15 @@ async function markScore() {
 		el.classList.add("hovered");
 	}
 	const els = find(selected.value?.id);
+	if (selectedStaff.value !== null) {
+		for (const measure of scoreEl.value.querySelectorAll(".measure")) {
+			const staff =
+				measure.querySelectorAll(":scope > .staff")[selectedStaff.value];
+			els.push(
+				...(staff?.querySelectorAll(":scope > .clef, :scope > .keySig") ?? []),
+			);
+		}
+	}
 	if (selectedGroup.value) {
 		const key = groupKey(selectedGroup.value);
 		for (const sym of scoreEl.value.querySelectorAll(".grpSym")) {
@@ -936,7 +1153,14 @@ async function markScore() {
 }
 
 watch(
-	[hoveredId, () => selected.value?.id, selectedPart, selectedGroup, result],
+	[
+		hoveredId,
+		() => selected.value?.id,
+		selectedPart,
+		selectedGroup,
+		selectedStaff,
+		result,
+	],
 	markScore,
 	{ flush: "post" },
 );
@@ -992,6 +1216,8 @@ function onKey(event) {
 			selectedKey.value = null;
 			selectedPart.value = null;
 			selectedGroupKey.value = null;
+			selectedStaff.value = null;
+			selectedClefKey.value = null;
 		}
 		return;
 	}
@@ -1243,7 +1469,7 @@ async function downloadMidi() {
 				<span v-else-if="pickHint" class="error">{{ pickHint }}</span>
 				<span v-else class="hint">
 					A first draft: click a note, tie, slur, hairpin or dynamic to correct
-					it, or a part's name to rename it.
+					it, or a clef, key, bracket or part's name.
 				</span>
 			</p>
 			<div v-if="result.svg.length > 0" class="group zoom" aria-label="Zoom">
@@ -1281,7 +1507,7 @@ async function downloadMidi() {
 				</div>
 			</div>
 			<!-- beside the score; on a phone, a sheet at the bottom while a symbol is selected -->
-			<div class="side" :class="{ open: !!selected || selectedPart !== null || !!selectedGroup }">
+			<div class="side" :class="{ open: !!selected || selectedPart !== null || !!selectedGroup || selectedStaff !== null || !!selectedClef }">
 				<div v-if="selectedPart !== null && !selected" class="note-editor">
 					<div class="note-title">
 						<strong>Part {{ selectedPart + 1 }}{{ partStaves.length > 1 ? ` of ${partStaves.length}` : "" }}</strong>
@@ -1318,6 +1544,81 @@ async function downloadMidi() {
 						</div>
 					</div>
 					<p class="hint">The name is printed at the left of the first system. Leave it empty to print no name.</p>
+				</div>
+				<div v-if="selectedStaff !== null && !selected" class="note-editor">
+					<div class="note-title">
+						<strong>Staff {{ selectedStaff + 1 }} · clef and key</strong>
+						<button class="link" title="Deselect (Esc)" @click="selectedStaff = null">✕</button>
+					</div>
+					<div class="rows">
+						<span class="label">Clef</span>
+						<div class="group" aria-label="Clef">
+							<button
+								v-for="[name, text] in CLEF_CHOICES"
+								:key="name"
+								:aria-pressed="clefsNow[selectedStaff] === name"
+								@click="setStaffClef(name)"
+							>
+								{{ text }}
+							</button>
+							<select
+								:value="isMoreClef(clefsNow[selectedStaff]) ? clefsNow[selectedStaff] : ''"
+								aria-label="Other clefs"
+								@change="setStaffClef($event.target.value)"
+							>
+								<option value="" disabled>More…</option>
+								<option v-for="[name, text] in MORE_CLEFS" :key="name" :value="name">{{ text }}</option>
+							</select>
+						</div>
+						<span class="label">Key</span>
+						<div class="group key-choices" aria-label="Key signature">
+							<button
+								v-for="f in KEYS"
+								:key="f"
+								:aria-pressed="keyNow === f"
+								:title="keyTitle(f)"
+								@click="setKey(f)"
+							>
+								{{ keyLabel(f) }}
+							</button>
+						</div>
+					</div>
+					<p class="hint">
+						The clef is set for this staff, the key for all staves, both in the
+						whole score ({{ keyTitle(keyNow) }} now). The notes keep their place on the
+						staff: their pitches follow.
+					</p>
+				</div>
+				<div v-if="selectedClef && !selected" class="note-editor">
+					<div class="note-title">
+						<strong>Clef change · {{ CLEF_NAMES[selectedClef.cls.slice(5)] ?? selectedClef.cls.slice(5) }}</strong>
+						<button class="link" title="Deselect (Esc)" @click="selectedClefKey = null">✕</button>
+					</div>
+					<div class="rows">
+						<span class="label">Clef</span>
+						<div class="group" aria-label="Clef">
+							<button
+								v-for="[name, text] in CLEF_CHOICES"
+								:key="name"
+								:aria-pressed="selectedClef.cls === `clef_${name}`"
+								@click="setMidClef(name)"
+							>
+								{{ text }}
+							</button>
+							<select
+								:value="isMoreClef(selectedClef.cls.slice(5)) ? selectedClef.cls.slice(5) : ''"
+								aria-label="Other clefs"
+								@change="setMidClef($event.target.value)"
+							>
+								<option value="" disabled>More…</option>
+								<option v-for="[name, text] in MORE_CLEFS" :key="name" :value="name">{{ text }}</option>
+							</select>
+						</div>
+					</div>
+					<p class="hint">A clef change within a bar: from here to the next clef.</p>
+					<div class="actions">
+						<button class="danger" title="Delete this clef change" @click="deleteMidClef">Delete</button>
+					</div>
 				</div>
 				<div v-if="selectedGroup && !selected" class="note-editor">
 					<div class="note-title">
@@ -1541,8 +1842,9 @@ async function downloadMidi() {
 					</div>
 					<p class="hint keys">{{ isSpan || isDynamic ? "Del delete · Esc deselect" : "← → previous / next · Esc deselect" }}</p>
 				</div>
+				<!-- not for a part, bracket or staff: no place on the page to show -->
 				<PageHighlight
-					v-if="highlightPage?.url"
+					v-if="highlightPage?.url && selectedPart === null && !selectedGroup && selectedStaff === null"
 					:key="shownPage"
 					:src="highlightPage.url"
 					:width="highlightPage.width"

@@ -1,6 +1,7 @@
 // The score shown and edited: the pages' results (see pipeline/edit.js
 // resultOf) together, with the joined MusicXML (given its title and composer)
 // rendered.
+import { CLEF_XML } from "./pipeline/copisteria/write.js";
 import { renderMusicXml } from "./render/verovio.js";
 
 const escapeXml = (s) =>
@@ -43,6 +44,45 @@ function withPartNames(xml, parts, placeholders) {
 		},
 	);
 }
+
+/** The clef a MusicXML <clef> shows, by name (see vocab.js CLEFS). */
+function clefName(clef) {
+	const sign = clef.match(/<sign>\s*(\w+)/)?.[1];
+	const line = Number(clef.match(/<line>\s*(\d+)/)?.[1] ?? 0) || null;
+	const octave = Number(clef.match(/<clef-octave-change>\s*(-?\d+)/)?.[1] ?? 0);
+	const found = Object.entries(CLEF_XML).find(
+		([name, [s, l, o]]) =>
+			name !== "other" &&
+			s === sign &&
+			(sign === "percussion" || l === line) &&
+			o === octave,
+	);
+	return found?.[0] ?? null;
+}
+
+/**
+ * Each staff's clef at the start of the score, in order (all parts' staves:
+ * a staff's place, as in the systems), by name, or null.
+ */
+export function staffClefs(xml) {
+	const out = [];
+	for (const [part] of xml.matchAll(/<part id="[^"]*">[\s\S]*?<\/part>/g)) {
+		const attrs = part.match(/<attributes>[\s\S]*?<\/attributes>/)?.[0] ?? "";
+		const staves = Number(attrs.match(/<staves>(\d+)<\/staves>/)?.[1] ?? 1);
+		const clefs = new Array(staves).fill(null);
+		for (const [clef, n] of attrs.matchAll(
+			/<clef(?: number="(\d+)")?[^>]*>[\s\S]*?<\/clef>/g,
+		)) {
+			clefs[Number(n ?? 1) - 1] = clefName(clef);
+		}
+		out.push(...clefs);
+	}
+	return out;
+}
+
+/** The score's key signature at its start, in fifths (-7 … 7). */
+export const scoreKey = (xml) =>
+	Number(xml.match(/<fifths>\s*(-?\d+)/)?.[1] ?? 0);
 
 // the brackets: a group of parts (first … last, counted from 0) joined by a
 // symbol at the left of each system, its bar lines through all its staves or
@@ -223,6 +263,7 @@ export async function buildScore(pageResults, xml, credits = {}) {
 		pageResults,
 		musicXml,
 		symbols: pageResults.flatMap((r) => r.symbols),
+		clefs: pageResults.flatMap((r) => r.clefs ?? []),
 		summary,
 		unplaced: pageResults.reduce((n, r) => n + (r.unplaced ?? 0), 0),
 		svg,
